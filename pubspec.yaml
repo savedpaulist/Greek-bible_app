@@ -1,0 +1,96 @@
+name: greek_bible
+description: Greek Bible Reader with Strong's dictionary and morphology.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sqflite: ^2.3.0
+  path: ^1.9.0
+  shared_preferences: ^2.2.2
+  flutter_html: ^3.0.0-beta.2
+  provider: ^6.1.5
+  scrollable_positioned_list: ^0.3.8
+  flutter_markdown: ^0.7.7+1
+  path_provider: ^2.1.5
+  share_plus: ^10.1.4
+  uuid: ^4.5.3
+  carousel_slider: ^5.1.2
+  google_nav_bar: ^5.0.6
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: Gentium
+      fonts:
+        - asset: assets/fonts/GentiumPlus-Regular.ttf
+        - asset: assets/fonts/GentiumPlus-Italic.ttf
+          style: italic
+        - asset: assets/fonts/GentiumPlus-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/GentiumPlus-BoldItalic.ttf
+          weight: 700
+          style: italic
+    - family: CharisSIL
+      fonts:
+        - asset: assets/fonts/Charis_SIL/CharisSIL-Regular.ttf
+        - asset: assets/fonts/Charis_SIL/CharisSIL-Italic.ttf
+          style: italic
+        - asset: assets/fonts/Charis_SIL/CharisSIL-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Charis_SIL/CharisSIL-BoldItalic.ttf
+          weight: 700
+          style: italic
+    - family: PTSerif
+      fonts:
+        - asset: assets/fonts/PT_Serif/PTSerif-Regular.ttf
+        - asset: assets/fonts/PT_Serif/PTSerif-Italic.ttf
+          style: italic
+        - asset: assets/fonts/PT_Serif/PTSerif-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/PT_Serif/PTSerif-BoldItalic.ttf
+          weight: 700
+          style: italic
+    - family: SourceSerif4
+      fonts:
+        - asset: assets/fonts/Source_Serif_4/static/SourceSerif4-Regular.ttf
+        - asset: assets/fonts/Source_Serif_4/static/SourceSerif4-Italic.ttf
+          style: italic
+        - asset: assets/fonts/Source_Serif_4/static/SourceSerif4-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Source_Serif_4/static/SourceSerif4-BoldItalic.ttf
+          weight: 700
+          style: italic
+    - family: EBGaramond
+      fonts:
+        - asset: assets/fonts/EB_Garamond/static/EBGaramond-Regular.ttf
+        - asset: assets/fonts/EB_Garamond/static/EBGaramond-Italic.ttf
+          style: italic
+        - asset: assets/fonts/EB_Garamond/static/EBGaramond-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/EB_Garamond/static/EBGaramond-BoldItalic.ttf
+          weight: 700
+          style: italic
+    - family: DroidSerif
+      fonts:
+        - asset: assets/fonts/droid-serif/DroidSerif.ttf
+        - asset: assets/fonts/droid-serif/DroidSerif-Italic.ttf
+          style: italic
+        - asset: assets/fonts/droid-serif/DroidSerif-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/droid-serif/DroidSerif-BoldItalic.ttf
+          weight: 700
+          style: italic
+
+
+  assets:
+    - assets/
+    - assets/fonts/
