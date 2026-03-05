@@ -48,13 +48,13 @@ void showWordOverlayPopup({
 }) {
   dismissWordOverlay();
 
-  final box    = ctx.findRenderObject() as RenderBox;
+  final box = ctx.findRenderObject() as RenderBox;
   final offset = box.localToGlobal(Offset.zero);
-  final sz     = box.size;
-  final sw     = MediaQuery.of(ctx).size.width;
-  final sh     = MediaQuery.of(ctx).size.height;
-  final popupWidth  = (sw * 0.825).clamp(330.0, 600.0);
-  final popupHeight = (sh * 0.35).clamp(120.0, 320.0);
+  final sz = box.size;
+  final sw = MediaQuery.of(ctx).size.width;
+  final sh = MediaQuery.of(ctx).size.height;
+  final popupWidth = (sw * 0.72).clamp(300.0, 540.0);
+  final popupHeight = (sh * 0.50).clamp(180.0, 520.0);
   const gap = 4.0;
 
   final wordBottom = offset.dy + sz.height;
@@ -78,41 +78,43 @@ void showWordOverlayPopup({
   // Use the root overlay so the popup is above everything (including modals)
   final rootOverlay = Overlay.of(ctx, rootOverlay: true);
 
-  final overlay = OverlayEntry(builder: (_) => FocusScope(
-    autofocus: false,
-    child: Stack(children: [
-      // Tap-away dismiss layer
-      Positioned.fill(child: GestureDetector(
-        onTap: dismissWordOverlay,
-        behavior: HitTestBehavior.translucent,
-        child: const SizedBox.expand(),
-      )),
-      // Popup
-      Positioned(
-        left: (offset.dx - popupWidth / 2 + sz.width / 2)
-            .clamp(8.0, sw - popupWidth - 8),
-        top: popupTop,
-        width: popupWidth,
-        child: LimitedBox(
-          maxHeight: popupHeight,
-          child: WordQuickView(
-            word:     word,
-            db:       db,
-            fontSize: fontSize,
-            popupFontSize: popupFontSize,
-            onClose:  dismissWordOverlay,
-            onBibleLink: onBibleLink != null
-                ? (b, ch, v) {
-                    dismissWordOverlay();
-                    onBibleLink(b, ch, v);
-                  }
-                : null,
-            onWordCommentChanged: onWordCommentChanged,
-          ),
-        ),
-      ),
-    ]),
-  ));
+  final overlay = OverlayEntry(
+      builder: (_) => FocusScope(
+            autofocus: false,
+            child: Stack(children: [
+              // Tap-away dismiss layer
+              Positioned.fill(
+                  child: GestureDetector(
+                onTap: dismissWordOverlay,
+                behavior: HitTestBehavior.translucent,
+                child: const SizedBox.expand(),
+              )),
+              // Popup
+              Positioned(
+                left: (offset.dx - popupWidth / 2 + sz.width / 2)
+                    .clamp(8.0, sw - popupWidth - 8),
+                top: popupTop,
+                width: popupWidth,
+                child: LimitedBox(
+                  maxHeight: popupHeight,
+                  child: WordQuickView(
+                    word: word,
+                    db: db,
+                    fontSize: fontSize,
+                    popupFontSize: popupFontSize,
+                    onClose: dismissWordOverlay,
+                    onBibleLink: onBibleLink != null
+                        ? (b, ch, v) {
+                            dismissWordOverlay();
+                            onBibleLink(b, ch, v);
+                          }
+                        : null,
+                    onWordCommentChanged: onWordCommentChanged,
+                  ),
+                ),
+              ),
+            ]),
+          ));
 
   _globalWordOverlay = overlay;
   rootOverlay.insert(overlay);
@@ -203,14 +205,18 @@ class _WordUnderlinePainter extends CustomPainter {
         _drawDashes(canvas, paint, y, w, dashLen: 8, gapLen: 5);
         break;
       case MarkupKind.underlineDotted:
-        final dotPaint = Paint()..color = color..style = PaintingStyle.fill;
+        final dotPaint = Paint()
+          ..color = color
+          ..style = PaintingStyle.fill;
         for (double x = 1; x < w; x += 5.0) {
           canvas.drawCircle(Offset(x, y), 0.9, dotPaint);
         }
         break;
       case MarkupKind.underlineDashDot:
         // Pattern: _._._. — alternating dash and dot with even spacing
-        final dotPaint = Paint()..color = color..style = PaintingStyle.fill;
+        final dotPaint = Paint()
+          ..color = color
+          ..style = PaintingStyle.fill;
         double x = 0;
         while (x < w) {
           // dash
@@ -232,14 +238,18 @@ class _WordUnderlinePainter extends CustomPainter {
       {required double dashLen, required double gapLen}) {
     double x = 0;
     while (x < w) {
-      canvas.drawLine(Offset(x, y), Offset((x + dashLen).clamp(0, w), y), paint);
+      canvas.drawLine(
+          Offset(x, y), Offset((x + dashLen).clamp(0, w), y), paint);
       x += dashLen + gapLen;
     }
   }
 
   @override
   bool shouldRepaint(covariant _WordUnderlinePainter old) =>
-      kind != old.kind || color != old.color || thickness != old.thickness || offset != old.offset;
+      kind != old.kind ||
+      color != old.color ||
+      thickness != old.thickness ||
+      offset != old.offset;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -249,38 +259,11 @@ class _WordUnderlinePainter extends CustomPainter {
 /// Cleans up Strong's dictionary HTML:
 /// 1. Merges float:left word div + float:right {part of speech} div into one line.
 /// 2. Removes the extra <br/> between the header and definition body.
-/// 3. Removes consecutive empty paragraphs / line breaks.
-String cleanStrongsHtml(String html) {
-  var result = html;
-
-  // ── 1. Merge float:left (word) + float:right (part of speech) into inline ──
-  // Actual DB pattern:
-  //   <div style='float:left;'> <el>word</el> </div>
-  //   <div style='float:right;'>..{с.гл., 4}..</div> <br/>
-  // → <span>word</span> <span>{с.гл., 4}</span><br/>
-  result = result.replaceAllMapped(
-    RegExp(
-      r"<div\s+style='float:\s*left;?\s*'>\s*(.*?)\s*</div>"
-      r"\s*<div\s+style='float:\s*right;?\s*'>\s*(.*?)\s*</div>"
-      r"\s*<br\s*/?>",
-      caseSensitive: false,
-      dotAll: true,
-    ),
-    (m) => '<span>${m[1]!.trim()}</span> <span>${m[2]!.trim()}</span><br/>',
-  );
-
-  // ── 2. Remove empty paragraphs: <p></p>, <p> </p>, <p><br></p> ──
-  result = result.replaceAll(
-    RegExp(r'<p[^>]*>\s*(<br\s*/?>)?\s*</p>', caseSensitive: false), '',
-  );
-
-  // ── 3. Collapse 3+ consecutive <br> into a single one ──
-  result = result.replaceAll(
-    RegExp(r'(<br\s*/?>[\s\n]*){3,}', caseSensitive: false), '<br>',
-  );
-
-  return result.trim();
-}
+/// 3. Removes consecutive empty paragraphs / line breaks and leading/trailing whitespace.
+// Note: RegExp-based HTML cleanup removed. We now pass raw HTML
+// through the project's HTML parser dependency and let it handle
+// presentation/cleanup. The previous `cleanStrongsHtml` function was
+// removed to avoid fragile RegExp manipulations.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared popup header
@@ -289,6 +272,7 @@ String cleanStrongsHtml(String html) {
 class PopupHeader extends StatelessWidget {
   final String title;
   final String? subtitle;
+  final String? strongs;
   final bool loading;
   final double fontSize;
   final VoidCallback? onExpand;
@@ -298,6 +282,7 @@ class PopupHeader extends StatelessWidget {
     super.key,
     required this.title,
     this.subtitle,
+    this.strongs,
     this.loading = false,
     required this.fontSize,
     this.onExpand,
@@ -340,6 +325,26 @@ class PopupHeader extends StatelessWidget {
                   ),
                 ),
               ],
+              if (strongs != null) ...[
+                const Spacer(),
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: cs.onPrimaryContainer.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'G$strongs',
+                    style: TextStyle(
+                      fontSize: fontSize - 4,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onPrimaryContainer.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -349,7 +354,8 @@ class PopupHeader extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             child: Padding(
               padding: const EdgeInsets.all(6),
-              child: Icon(Icons.open_in_full, size: 18, color: cs.onPrimaryContainer),
+              child: Icon(Icons.open_in_full,
+                  size: 18, color: cs.onPrimaryContainer),
             ),
           ),
           const SizedBox(width: 4),
@@ -400,8 +406,8 @@ class _WordQuickViewState extends State<WordQuickView> {
   WordDetail? _detail;
   bool _loading = true;
   WordComment? _wordComment;
-  WordMarkup? _wordHighlight;  // word-level background markup
-  WordMarkup? _wordUnderline;  // word-level underline markup
+  WordMarkup? _wordHighlight; // word-level background markup
+  WordMarkup? _wordUnderline; // word-level underline markup
   bool _editingComment = false;
   final _commentCtrl = TextEditingController();
   Timer? _commentSaveTimer;
@@ -436,25 +442,34 @@ class _WordQuickViewState extends State<WordQuickView> {
   }
 
   Future<void> _load() async {
-    final d = await widget.db.getWordDetail(widget.word);
+    final d = await widget.db.getWordDetail(widget.word, language: _appState.language);
+    // Debug: print raw HTML from dictionary for inspection
+    // ignore: avoid_print
+    //print('RAW definitionHtml for "${widget.word.word}" (${widget.word.strongs}):\n${d.definitionHtml}\n---END---');
     WordComment? wc;
     WordMarkup? wh;
     WordMarkup? wu;
     if (mounted) {
       wc = await _notes.getWordComment(
-        _appState.currentBook, widget.word.chapter,
-        widget.word.verse, widget.word.wordNumber,
+        _appState.currentBook,
+        widget.word.chapter,
+        widget.word.verse,
+        widget.word.wordNumber,
       );
       // Load word-level markups
       final markups = await _notes.getMarkupsForChapter(
-        _appState.currentBook, widget.word.chapter,
+        _appState.currentBook,
+        widget.word.chapter,
       );
-      final wordMarkups = markups.where((m) =>
-        m.verse == widget.word.verse &&
-        m.wordNumber == widget.word.wordNumber,
+      final wordMarkups = markups.where(
+        (m) =>
+            m.verse == widget.word.verse &&
+            m.wordNumber == widget.word.wordNumber,
       );
-      wh = wordMarkups.where((m) => m.kind == MarkupKind.background).firstOrNull;
-      wu = wordMarkups.where((m) => m.kind != MarkupKind.background).firstOrNull;
+      wh =
+          wordMarkups.where((m) => m.kind == MarkupKind.background).firstOrNull;
+      wu =
+          wordMarkups.where((m) => m.kind != MarkupKind.background).firstOrNull;
     }
     if (!mounted) return;
     setState(() {
@@ -476,8 +491,11 @@ class _WordQuickViewState extends State<WordQuickView> {
           await _notes.deleteWordComment(_wordComment!.id);
         }
         await _notes.addWordComment(
-          _appState.currentBook, widget.word.chapter,
-          widget.word.verse, widget.word.wordNumber, text,
+          _appState.currentBook,
+          widget.word.chapter,
+          widget.word.verse,
+          widget.word.wordNumber,
+          text,
         );
         widget.onWordCommentChanged?.call();
       }
@@ -499,8 +517,11 @@ class _WordQuickViewState extends State<WordQuickView> {
       await _notes.deleteWordComment(_wordComment!.id);
     }
     final wc = await _notes.addWordComment(
-      _appState.currentBook, widget.word.chapter,
-      widget.word.verse, widget.word.wordNumber, text,
+      _appState.currentBook,
+      widget.word.chapter,
+      widget.word.verse,
+      widget.word.wordNumber,
+      text,
     );
     if (!mounted) return;
     setState(() {
@@ -582,7 +603,7 @@ class _WordQuickViewState extends State<WordQuickView> {
     MarkupKind.underlineSingle: '──',
     MarkupKind.underlineDouble: '══',
     MarkupKind.underlineDashed: '╌╌',
-    MarkupKind.underlineWavy:   '∿∿',
+    MarkupKind.underlineWavy: '∿∿',
     MarkupKind.underlineDotted: '····',
     MarkupKind.underlineDashDot: '╌·╌',
   };
@@ -682,12 +703,14 @@ class _WordQuickViewState extends State<WordQuickView> {
                 // Custom underline color picker
                 _highlightDot(
                   color: activeColor != null &&
-                          !_presetUnderlineColors.any((c) => c.toARGB32() == activeColor)
+                          !_presetUnderlineColors
+                              .any((c) => c.toARGB32() == activeColor)
                       ? Color(activeColor)
                       : null,
                   icon: Icons.palette,
                   selected: activeColor != null &&
-                      !_presetUnderlineColors.any((c) => c.toARGB32() == activeColor),
+                      !_presetUnderlineColors
+                          .any((c) => c.toARGB32() == activeColor),
                   onTap: () => _openUnderlineColorPicker(cs),
                 ),
               ],
@@ -804,7 +827,8 @@ class _WordQuickViewState extends State<WordQuickView> {
           ),
         ),
         child: icon != null
-            ? Icon(icon, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant)
+            ? Icon(icon,
+                size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant)
             : null,
       ),
     );
@@ -831,7 +855,8 @@ class _WordQuickViewState extends State<WordQuickView> {
 
     return Material(
       elevation: 8,
-      borderRadius: BorderRadius.zero,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
       color: cs.surface,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: double.infinity),
@@ -848,6 +873,7 @@ class _WordQuickViewState extends State<WordQuickView> {
                       _detail!.lexeme != widget.word.word)
                   ? widget.word.word
                   : null,
+              strongs: widget.word.strongs,
               loading: _loading,
               fontSize: fontSize,
               onExpand: _openFullScreen,
@@ -865,7 +891,8 @@ class _WordQuickViewState extends State<WordQuickView> {
             else
               Flexible(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   child: GestureDetector(
                     onTap: _openFullScreen,
                     behavior: HitTestBehavior.translucent,
@@ -884,9 +911,7 @@ class _WordQuickViewState extends State<WordQuickView> {
                           const SizedBox(height: 6),
                         ],
                         buildHtmlWidget(
-                          html: cleanStrongsHtml(truncateHtmlForPreview(
-                            _detail!.definitionHtml, 2000,
-                          )),
+                          html: truncateHtmlForPreview(_detail!.definitionHtml, 2000),
                           baseFontSize: fontSize - 2,
                         ),
                       ],
@@ -897,7 +922,8 @@ class _WordQuickViewState extends State<WordQuickView> {
             if (!_loading) ...[
               Divider(height: 1, color: cs.outlineVariant),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: _CommentFooter(
                   comment: _wordComment,
                   editing: _editingComment,
@@ -951,7 +977,8 @@ class _CommentFooter extends StatelessWidget {
           hintText: 'Комментарий (до 200 символов)',
           hintStyle: TextStyle(fontSize: fontSize - 2),
           isDense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           border: const OutlineInputBorder(),
         ),
       );
@@ -988,12 +1015,14 @@ class _CommentFooter extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(children: [
-          Icon(Icons.add_comment_outlined, size: 16, color: cs.onSurfaceVariant),
+          Icon(Icons.add_comment_outlined,
+              size: 16, color: cs.onSurfaceVariant),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
               'Комментарий',
-              style: TextStyle(fontSize: fontSize - 1, color: cs.onSurfaceVariant),
+              style:
+                  TextStyle(fontSize: fontSize - 1, color: cs.onSurfaceVariant),
             ),
           ),
         ]),
@@ -1029,10 +1058,10 @@ class _WordColorPickerDialogState extends State<_WordColorPickerDialog> {
   void initState() {
     super.initState();
     final hsl = HSLColor.fromColor(widget.initial);
-    _hue        = hsl.hue;
+    _hue = hsl.hue;
     _saturation = hsl.saturation;
-    _lightness  = hsl.lightness;
-    _alpha      = hsl.alpha.clamp(0.1, 1.0);
+    _lightness = hsl.lightness;
+    _alpha = hsl.alpha.clamp(0.1, 1.0);
   }
 
   Color get _currentColor =>
@@ -1059,13 +1088,17 @@ class _WordColorPickerDialogState extends State<_WordColorPickerDialog> {
             ),
             const SizedBox(height: 12),
             // Hue
-            _colorSliderRow('Тон', _hue / 360, (v) => setState(() => _hue = v * 360)),
+            _colorSliderRow(
+                'Тон', _hue / 360, (v) => setState(() => _hue = v * 360)),
             // Saturation
-            _colorSliderRow('Насыщ.', _saturation, (v) => setState(() => _saturation = v)),
+            _colorSliderRow(
+                'Насыщ.', _saturation, (v) => setState(() => _saturation = v)),
             // Lightness
-            _colorSliderRow('Яркость', _lightness, (v) => setState(() => _lightness = v)),
+            _colorSliderRow(
+                'Яркость', _lightness, (v) => setState(() => _lightness = v)),
             // Alpha
-            _colorSliderRow('Прозрач.', _alpha, (v) => setState(() => _alpha = v)),
+            _colorSliderRow(
+                'Прозрач.', _alpha, (v) => setState(() => _alpha = v)),
           ],
         ),
       ),
@@ -1082,14 +1115,18 @@ class _WordColorPickerDialogState extends State<_WordColorPickerDialog> {
     );
   }
 
-  Widget _colorSliderRow(String label, double value, ValueChanged<double> onChanged) {
+  Widget _colorSliderRow(
+      String label, double value, ValueChanged<double> onChanged) {
     return Row(
       children: [
-        SizedBox(width: 72, child: Text(label, style: const TextStyle(fontSize: 12))),
+        SizedBox(
+            width: 72,
+            child: Text(label, style: const TextStyle(fontSize: 12))),
         Expanded(
           child: Slider(
             value: value,
-            min: 0, max: 1,
+            min: 0,
+            max: 1,
             onChanged: onChanged,
           ),
         ),
@@ -1145,7 +1182,11 @@ class _WordFullViewState extends State<WordFullView> {
           if (seen.add(key)) unique.add(h);
         }
       }
-      if (mounted) setState(() { _dictHits = unique; _dictLoading = false; });
+      if (mounted)
+        setState(() {
+          _dictHits = unique;
+          _dictLoading = false;
+        });
     } catch (_) {
       if (mounted) setState(() => _dictLoading = false);
     }
@@ -1197,8 +1238,8 @@ class _WordFullViewState extends State<WordFullView> {
     final fs = appState.fullPopupFontSize;
     final font = appState.fontFamily;
     final headTitle = widget.detail.lexeme ?? widget.word.word;
-    final showInText =
-        widget.detail.lexeme != null && widget.detail.lexeme != widget.word.word;
+    final showInText = widget.detail.lexeme != null &&
+        widget.detail.lexeme != widget.word.word;
     final cs = Theme.of(context).colorScheme;
 
     return DraggableScrollableSheet(
@@ -1210,7 +1251,8 @@ class _WordFullViewState extends State<WordFullView> {
         children: [
           // Drag handle
           Container(
-            width: 40, height: 4,
+            width: 40,
+            height: 4,
             margin: const EdgeInsets.symmetric(vertical: 8),
             decoration: BoxDecoration(
               color: cs.outline,
@@ -1225,13 +1267,15 @@ class _WordFullViewState extends State<WordFullView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(headTitle, style: TextStyle(
-                      fontSize: fs + 2, fontWeight: FontWeight.bold)),
+                    Text(headTitle,
+                        style: TextStyle(
+                            fontSize: fs + 2, fontWeight: FontWeight.bold)),
                     if (showInText)
-                      Text('в тексте: ${widget.word.word}', style: TextStyle(
-                        fontSize: fs - 2,
-                        fontStyle: FontStyle.italic,
-                        color: cs.secondary)),
+                      Text('в тексте: ${widget.word.word}',
+                          style: TextStyle(
+                              fontSize: fs - 2,
+                              fontStyle: FontStyle.italic,
+                              color: cs.secondary)),
                   ],
                 ),
               ),
@@ -1252,9 +1296,11 @@ class _WordFullViewState extends State<WordFullView> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text(widget.detail.morphologyText, style: TextStyle(
-                  fontStyle: FontStyle.italic, fontSize: fs - 2,
-                  color: cs.secondary)),
+                child: Text(widget.detail.morphologyText,
+                    style: TextStyle(
+                        fontStyle: FontStyle.italic,
+                        fontSize: fs - 2,
+                        color: cs.secondary)),
               ),
             ),
           // Lookup chips
@@ -1264,7 +1310,8 @@ class _WordFullViewState extends State<WordFullView> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Wrap(
-                  spacing: 8, runSpacing: 4,
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
                     for (final term in widget.detail.lookupTerms)
                       ActionChip(
@@ -1281,7 +1328,8 @@ class _WordFullViewState extends State<WordFullView> {
             child: SelectionArea(
               child: SingleChildScrollView(
                 controller: controller,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1299,9 +1347,11 @@ class _WordFullViewState extends State<WordFullView> {
                       )
                     else if (_dictHits.isNotEmpty) ...[
                       const Divider(height: 24, thickness: 1),
-                      Text('Другие словари', style: TextStyle(
-                        fontSize: fs, fontWeight: FontWeight.bold,
-                        color: cs.primary)),
+                      Text('Другие словари',
+                          style: TextStyle(
+                              fontSize: fs,
+                              fontWeight: FontWeight.bold,
+                              color: cs.primary)),
                       const SizedBox(height: 8),
                       ..._buildDictSections(fs, font, cs),
                     ],
@@ -1341,16 +1391,19 @@ class _WordFullViewState extends State<WordFullView> {
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                 child: Row(children: [
                   Icon(
-                    isExpanded
-                        ? Icons.keyboard_arrow_up
-                        : Icons.keyboard_arrow_down,
-                    size: 20, color: cs.primary),
+                      isExpanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      size: 20,
+                      color: cs.primary),
                   const SizedBox(width: 6),
-                  Expanded(child: Text(
+                  Expanded(
+                      child: Text(
                     '$dictName (${entry.value.length})',
                     style: TextStyle(
-                      fontSize: fs - 1, fontWeight: FontWeight.w600,
-                      color: cs.primary),
+                        fontSize: fs - 1,
+                        fontWeight: FontWeight.w600,
+                        color: cs.primary),
                   )),
                 ]),
               ),
@@ -1419,7 +1472,9 @@ class _VersePreviewSheetState extends State<VersePreviewSheet> {
     final appState = context.read<AppState>();
     final notes = context.read<NotesProvider>();
     final words = await widget.db.getVerseWords(
-      widget.book, widget.chapter, widget.verse,
+      widget.book,
+      widget.chapter,
+      widget.verse,
     );
     final verses = widget.db.groupIntoVerses(words);
     final books = appState.books;
@@ -1427,18 +1482,18 @@ class _VersePreviewSheetState extends State<VersePreviewSheet> {
     List<WordMarkup> markups = const [];
     if (mounted) {
       final chapterMarkups = await notes.getMarkupsForChapter(
-        widget.book, widget.chapter,
+        widget.book,
+        widget.chapter,
       );
-      markups = chapterMarkups
-          .where((m) => m.verse == widget.verse)
-          .toList();
+      markups = chapterMarkups.where((m) => m.verse == widget.verse).toList();
     }
     if (mounted) {
       setState(() {
         _verseModel = verses.isNotEmpty ? verses.first : null;
         _bookName = books
             .where((b) => b.bookNumber == widget.book)
-            .firstOrNull?.shortName;
+            .firstOrNull
+            ?.shortName;
         _markups = markups;
         _loading = false;
       });
@@ -1456,8 +1511,10 @@ class _VersePreviewSheetState extends State<VersePreviewSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           // Handle
-          Center(child: Container(
-            width: 40, height: 4,
+          Center(
+              child: Container(
+            width: 40,
+            height: 4,
             margin: const EdgeInsets.only(bottom: 8),
             decoration: BoxDecoration(
               color: theme.colorScheme.outline,
@@ -1468,9 +1525,10 @@ class _VersePreviewSheetState extends State<VersePreviewSheet> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(children: [
-              Text(ref, style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: theme.colorScheme.primary)),
+              Text(ref,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.primary)),
               const Spacer(),
               if (widget.onNavigate != null)
                 TextButton.icon(
@@ -1499,7 +1557,8 @@ class _VersePreviewSheetState extends State<VersePreviewSheet> {
           else
             Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: VerseWordRow(
                   verse: _verseModel!,
                   db: widget.db,
@@ -1556,10 +1615,12 @@ class VerseWordRow extends StatelessWidget {
 
       // Find markup for this word
       final bgMarkup = markups
-          .where((m) => m.wordNumber == w.wordNumber && m.kind == MarkupKind.background)
+          .where((m) =>
+              m.wordNumber == w.wordNumber && m.kind == MarkupKind.background)
           .firstOrNull;
       final ulMarkup = markups
-          .where((m) => m.wordNumber == w.wordNumber && m.kind != MarkupKind.background)
+          .where((m) =>
+              m.wordNumber == w.wordNumber && m.kind != MarkupKind.background)
           .firstOrNull;
 
       // Background from markup
@@ -1575,17 +1636,18 @@ class VerseWordRow extends StatelessWidget {
       if (ulMarkup != null) {
         ulColor = ulMarkup.colorValue != null
             ? Color(ulMarkup.colorValue!)
-            : underlineColorsForTheme(themeMode)[
-                ulMarkup.colorIndex.clamp(0, underlineColorsForTheme(themeMode).length - 1)];
+            : underlineColorsForTheme(themeMode)[ulMarkup.colorIndex
+                .clamp(0, underlineColorsForTheme(themeMode).length - 1)];
       }
 
-      Widget wordChild = Text(display, style: TextStyle(
-        fontFamily: fontFamily,
-        fontSize: fontSize,
-        height: lineHeight,
-        fontWeight: highlighted ? FontWeight.w900 : FontWeight.normal,
-        backgroundColor: wordBg,
-      ));
+      Widget wordChild = Text(display,
+          style: TextStyle(
+            fontFamily: fontFamily,
+            fontSize: fontSize,
+            height: lineHeight,
+            fontWeight: highlighted ? FontWeight.w900 : FontWeight.normal,
+            backgroundColor: wordBg,
+          ));
 
       if (ulMarkup != null) {
         wordChild = WordUnderline(
@@ -1595,15 +1657,18 @@ class VerseWordRow extends StatelessWidget {
         );
       }
 
-      children.add(Builder(builder: (ctx) => GestureDetector(
-        onTap: punct ? null : () => showWordOverlayPopup(
-          ctx: ctx,
-          word: w,
-          db: db,
-          fontSize: fontSize,
-        ),
-        child: wordChild,
-      )));
+      children.add(Builder(
+          builder: (ctx) => GestureDetector(
+                onTap: punct
+                    ? null
+                    : () => showWordOverlayPopup(
+                          ctx: ctx,
+                          word: w,
+                          db: db,
+                          fontSize: fontSize,
+                        ),
+                child: wordChild,
+              )));
     }
 
     return SelectionArea(
@@ -1638,7 +1703,8 @@ class DictionaryWordPopup extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Material(
       elevation: 8,
-      borderRadius: BorderRadius.zero,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
       color: cs.surface,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: double.infinity),

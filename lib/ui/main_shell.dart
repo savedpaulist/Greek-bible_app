@@ -1,15 +1,14 @@
 // lib/ui/main_shell.dart
 //
 // Three-tab layout: Notes | Bible | Dictionaries
-// Navigation via PageView (slide animation).
-// Each tab owns a nested Navigator so sub-screens push *inside* the tab
-// and the bottom bar stays visible.
+// Navigation via PageView.
+// Each tab owns a nested Navigator so sub-screens push *inside* the tab.
 
-import 'dart:ui';
-
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-import 'package:google_nav_bar/google_nav_bar.dart';
+import 'package:provider/provider.dart';
+import '../core/app_state.dart';
 import '../features/notes/view/notes_screen.dart';
 import '../features/home/view/home_screen.dart';
 import '../features/dictionary/view/dictionary_screen.dart';
@@ -26,13 +25,10 @@ class MainShell extends StatefulWidget {
 }
 
 class MainShellState extends State<MainShell> {
-  final ValueNotifier<bool> _showBottomBar = ValueNotifier<bool>(true);
-
-  void setBottomBarVisible(bool visible) {
-    if (_showBottomBar.value != visible) {
-      _showBottomBar.value = visible;
-    }
-  }
+  // ── Mouse-drag gesture tracking (macOS / Windows with mouse) ───────────
+  // Accumulate horizontal delta so a single mouse-wheel flick = one page change
+  double _mouseHorizAccum = 0;
+  static const _mousePageThreshold = 80.0;
 
   late int _currentPage;
   late final PageController _pageController;
@@ -49,20 +45,15 @@ class MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
-    _showBottomBar.dispose();
     _pageController.dispose();
     super.dispose();
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  /// Animate to [page] from outside (e.g. deep-link, notification).
+  /// Jump to [page] instantly (no animation for E-Ink / performance).
   void goToPage(int page) {
-    _pageController.animateToPage(
-      page,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
+    _pageController.jumpToPage(page);
   }
 
   // ── Internal ───────────────────────────────────────────────────────────────
@@ -79,19 +70,17 @@ class MainShellState extends State<MainShell> {
     return true;
   }
 
-  void _onTabTapped(int index) {
-    if (index == _currentPage) {
-      // Tap on already-active tab → scroll back to root
-      _navKeys[index].currentState?.popUntil((r) => r.isFirst);
-    } else {
-      goToPage(index);
-    }
-  }
-
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
+    // Only subscribe to the error field — avoids full-shell rebuild on every
+    // AppState change (e.g. scroll updates, font size tweaks, etc.)
+    final error = context.select<AppState, String?>((s) => s.error);
+    Widget errorWidget = error != null && error.isNotEmpty
+        ? Center(child: Text('Ошибка: $error', style: const TextStyle(color: Colors.red, fontSize: 18)))
+        : const SizedBox.shrink();
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -100,152 +89,51 @@ class MainShellState extends State<MainShell> {
         if (shouldPop && context.mounted) Navigator.of(context).maybePop();
       },
       child: Scaffold(
-        extendBody: true,
-        body: PageView(
-          controller: _pageController,
-          onPageChanged: _onPageChanged,
-          physics: _currentPage == 0
-              ? const _NoLeftSwipePhysics()
-              : const BouncingScrollPhysics(),
+        body: Stack(
           children: [
-            _TabNavigator(
-                navigatorKey: _navKeys[0], child: const NotesScreen()),
-            _TabNavigator(
-              navigatorKey: _navKeys[1],
-              child: HomeScreen(
-                onScrollDirection: (direction) {
-                  if (direction.toString().contains('reverse')) {
-                    setBottomBarVisible(false);
-                  } else {
-                    setBottomBarVisible(true);
+            if (error != null && error.isNotEmpty)
+              errorWidget
+            else
+              Listener(
+                onPointerSignal: (event) {
+                  if (event is PointerScrollEvent) {
+                    final dx = event.scrollDelta.dx;
+                    final dy = event.scrollDelta.dy;
+                    if (dx.abs() > dy.abs() && dx.abs() > 5) {
+                      _mouseHorizAccum += dx;
+                      if (_mouseHorizAccum > _mousePageThreshold) {
+                        _mouseHorizAccum = 0;
+                        if (_currentPage < 2) goToPage(_currentPage + 1);
+                      } else if (_mouseHorizAccum < -_mousePageThreshold) {
+                        _mouseHorizAccum = 0;
+                        if (_currentPage > 0) goToPage(_currentPage - 1);
+                      }
+                    } else {
+                      _mouseHorizAccum = 0;
+                    }
                   }
                 },
-              ),
-            ),
-            _TabNavigator(
-              navigatorKey: _navKeys[2],
-              child: const DictionaryScreen(embedded: true),
-            ),
-          ],
-        ),
-        bottomNavigationBar: ValueListenableBuilder<bool>(
-          valueListenable: _showBottomBar,
-          builder: (context, show, _) => BottomPanelWidget(
-            show: show,
-            currentIndex: _currentPage,
-            onTabChange: _onTabTapped,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Semi-transparent GNav bottom bar
-// ─────────────────────────────────────────────────────────────────────────────
-
-class BottomPanelWidget extends StatelessWidget {
-  final bool show;
-  final int currentIndex;
-  final ValueChanged<int> onTabChange;
-
-  const BottomPanelWidget({
-    Key? key,
-    required this.show,
-    required this.currentIndex,
-    required this.onTabChange,
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedSlide(
-      duration: const Duration(milliseconds: 250),
-      offset: show ? Offset.zero : const Offset(0, 1),
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 250),
-        opacity: show ? 1 : 0,
-        child: _BottomNavBar(
-          currentIndex: currentIndex,
-          onTabChange: onTabChange,
-        ),
-      ),
-    );
-  }
-}
-
-class _BottomNavBar extends StatelessWidget {
-  const _BottomNavBar({
-    required this.currentIndex,
-    required this.onTabChange,
-    // required this.fixedWidth,
-  });
-
-  final int currentIndex;
-  final ValueChanged<int> onTabChange;
-  final double fixedWidth = 200;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    //final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    // Прозрачный фон (можно заменить на Colors.transparent)
-    final bgColor = const Color.fromARGB(0, 255, 255, 255);
-
-    return SizedBox(
-      width: MediaQuery.of(context).size.width,
-      child: Align(
-        alignment: Alignment.bottomCenter,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: BackdropFilter(
-            // При полностью прозрачном фоне можно убрать blur,
-            // но оставляем его, если хотите «стеклянный» эффект.
-            filter: ImageFilter.blur(sigmaX: 3, sigmaY: 3),
-            child: Container(
-              width: fixedWidth,
-              // Убираем цвет и границу – оставляем только дочерний контент
-              decoration: BoxDecoration(
-                color: bgColor,               // ← полностью прозрачный
-                // Если границу тоже не нужен, закомментируйте её:
-                // border: Border(
-                //   top: BorderSide(
-                //     color: cs.outlineVariant.withValues(),
-                //     width: 0.2,
-                //   ),
-                // ),
-              ),
-              child: SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  child: GNav(
-                    selectedIndex: currentIndex,
-                    onTabChange: onTabChange,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    tabBorderRadius: 20,
-                    tabActiveBorder: Border.all(
-                      color: cs.primary.withValues(),
-                      width: 1,
+                child: PageView(
+                  controller: _pageController,
+                  onPageChanged: _onPageChanged,
+                  physics: _currentPage == 0
+                      ? const _NoLeftSwipePhysics()
+                      : const ClampingScrollPhysics(),
+                  children: [
+                    _TabNavigator(
+                        navigatorKey: _navKeys[0], child: const NotesScreen()),
+                    _TabNavigator(
+                      navigatorKey: _navKeys[1],
+                      child: const HomeScreen(),
                     ),
-                    tabBackgroundColor: cs.primaryContainer.withValues(),
-                    color: cs.onSurfaceVariant,
-                    activeColor: cs.primary,
-                    iconSize: 24,
-                    gap: 4,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                    tabs: const [
-                      GButton(icon: Icons.note_alt_outlined, text: 'Заметки'),
-                      GButton(icon: Icons.auto_stories_outlined, text: 'Библия'),
-                      GButton(icon: Icons.menu_book_outlined, text: 'Словари'),
-                    ],
-                  ),
+                    _TabNavigator(
+                      navigatorKey: _navKeys[2],
+                      child: const DictionaryScreen(embedded: true),
+                    ),
+                  ],
                 ),
               ),
-            ),
-          ),
+          ],
         ),
       ),
     );
@@ -277,20 +165,45 @@ class _NoLeftSwipePhysics extends ScrollPhysics {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Wraps a root widget in its own nested Navigator
+// Wraps a root widget in its own nested Navigator.
+// StatefulWidget so the Navigator is NOT recreated on every parent rebuild —
+// this keeps the route alive and prevents a stale closure from being used.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _TabNavigator extends StatelessWidget {
+class _TabNavigator extends StatefulWidget {
   const _TabNavigator({required this.navigatorKey, required this.child});
 
   final GlobalKey<NavigatorState> navigatorKey;
   final Widget child;
 
   @override
+  State<_TabNavigator> createState() => _TabNavigatorState();
+}
+
+class _TabNavigatorState extends State<_TabNavigator> {
+  late Route<dynamic> _initialRoute;
+
+  @override
+  void initState() {
+    super.initState();
+    // Build the initial route once — no slide/fade animation so the tab
+    // appears instantly when the app opens.
+    _initialRoute = PageRouteBuilder<void>(
+      pageBuilder: (_, __, ___) => widget.child,
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Navigator(
-      key: navigatorKey,
-      onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => child),
+      key: widget.navigatorKey,
+      onGenerateInitialRoutes: (_, __) => [_initialRoute],
+      onGenerateRoute: (settings) => MaterialPageRoute(
+        builder: (_) => widget.child,
+        settings: settings,
+      ),
     );
   }
 }

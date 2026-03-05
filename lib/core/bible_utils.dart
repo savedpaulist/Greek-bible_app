@@ -18,7 +18,7 @@ bool isPunct(String w) => _punctRe.hasMatch(w.trim());
 /// Check whether a word is a critical text marker/tag.
 bool isCriticalTag(String w) {
   final t = w.trim();
-  return t.startsWith('n>') || t == '/n>' || t == 'variant:' || t == '{' || t == '}';
+  return t.startsWith('n>') || t == '/n>' || t == 'variant:' || t == '{' || t == '}' || t == '|';
 }
 
 // ─── Bible reference parsing ─────────────────────────────────────────────────

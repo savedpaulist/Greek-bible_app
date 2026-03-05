@@ -1,11 +1,9 @@
 // lib/home_screen.dart
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
-// ScrollDirection уже импортируется из material.dart
 import '../../../core/app_state.dart';
 import '../../../core/bible_utils.dart';
 import '../../../core/keyboard_scroll_helpers.dart';
@@ -17,21 +15,20 @@ import '../../settings/view/settings_screen.dart';
 import 'book_chapter_dialog.dart';
 import 'verse_widgets.dart';
 import 'comment_sheets.dart';
+import '../../../ui/main_shell.dart';
+
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum _ScrollDirection { forward, reverse }
-typedef ScrollDirectionCallback = void Function(_ScrollDirection direction);
-
 class HomeScreen extends StatefulWidget {
-  final ScrollDirectionCallback? onScrollDirection;
-  const HomeScreen({super.key, this.onScrollDirection});
+  static final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
+  const HomeScreen({super.key});
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMixin {
-  double _lastScrollOffset = 0;
   final ItemScrollController _itemScroll = ItemScrollController();
   final ItemPositionsListener _positionsListener = ItemPositionsListener.create();
   final FocusNode _focusNode = FocusNode();
@@ -200,104 +197,124 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                 ?.shortName ??
             '?');
 
+    double _dragDelta = 0;
+
     return Focus(
       focusNode: _focusNode,
       onKeyEvent: _handleKey,
-      child: NotificationListener<ScrollNotification>(
-        onNotification: (notification) {
-          if (notification is ScrollUpdateNotification) {
-            final offset = notification.metrics.pixels;
-            if (widget.onScrollDirection != null) {
-              if (offset > _lastScrollOffset + 8) {
-                widget.onScrollDirection!(_ScrollDirection.reverse);
-              } else if (offset < _lastScrollOffset - 8) {
-                widget.onScrollDirection!(_ScrollDirection.forward);
-              }
-            }
-            _lastScrollOffset = offset;
-          }
-          return false;
-        },
-        child: Scaffold(
-        appBar: AppBar(
-          leading: Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: ValueListenableBuilder<String>(
-              valueListenable: context.read<AppState>().positionLabel,
-              builder: (_, label, __) => TextButton(
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  alignment: Alignment.centerLeft,
-                ),
-                onPressed: _showBookPicker,
-                child: Text(
-                  label.isEmpty ? '$bookName ${state.currentChapter}:${state.currentVerse}' : label,
-                  style: TextStyle(
-                      fontSize: state.appBarFontSize, color: state.customColors.appBarText),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
+      child: Scaffold(
+          key: HomeScreen.scaffoldKey,
+          appBar: AppBar(
+            leading: Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: ValueListenableBuilder<String>(
+                valueListenable: context.read<AppState>().positionLabel,
+                builder: (_, label, __) => TextButton(
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    alignment: Alignment.centerLeft,
+                  ),
+                  onPressed: _showBookPicker,
+                  child: Text(
+                    label.isEmpty ? '$bookName ${state.currentChapter}:${state.currentVerse}' : label,
+                    style: TextStyle(
+                        fontSize: state.appBarFontSize, color: state.customColors.appBarText),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                 ),
               ),
             ),
+            leadingWidth: 170,
+            title: const SizedBox.shrink(),
+            actions: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 36,
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back, size: 22),
+                      tooltip: 'Назад',
+                      padding: EdgeInsets.zero,
+                      onPressed: state.canGoBack ? () => state.goBack() : null,
+                    ),
+                  ),
+                  SizedBox(
+                    width: 36,
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_forward, size: 22),
+                      tooltip: 'Вперёд',
+                      padding: EdgeInsets.zero,
+                      onPressed: state.canGoForward ? () => state.goForward() : null,
+                    ),
+                  ),
+                  IconButton(icon: const Icon(Icons.search), onPressed: _openSearch),
+                  IconButton(
+                    icon: Icon(state.textSelectionEnabled
+                        ? Icons.content_copy
+                        : Icons.content_copy_outlined),
+                    tooltip: state.textSelectionEnabled
+                        ? 'Выделение текста (вкл)'
+                        : 'Выделение текста (выкл)',
+                    onPressed: () => state.setTextSelectionEnabled(
+                        !state.textSelectionEnabled),
+                  ),
+                  IconButton(
+                      icon: const Icon(Icons.settings), onPressed: _showSettings),
+                ],
+              ),
+            ],
           ),
-          leadingWidth: 170,
-          title: const SizedBox.shrink(),
-          actions: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
+          body: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragUpdate: (details) {
+              _dragDelta += details.delta.dx;
+            },
+            onHorizontalDragEnd: (details) {
+              // Свайп слева направо (dx > 80 или скорость > 200) — заметки
+              if (_dragDelta > 80 || details.velocity.pixelsPerSecond.dx > 200) {
+                final shell = context.findAncestorStateOfType<MainShellState>();
+                if (shell != null) shell.goToPage(0); // Перейти к заметкам (tab 0)
+              }
+              // Свайп справа налево (dx < -80 или скорость < -200) — словарь
+              else if (_dragDelta < -80 || details.velocity.pixelsPerSecond.dx < -200) {
+                final shell = context.findAncestorStateOfType<MainShellState>();
+                if (shell != null) shell.goToPage(2); // Перейти к словарю (tab 2)
+              }
+              _dragDelta = 0;
+            },
+            onHorizontalDragCancel: () {
+              _dragDelta = 0;
+            },
+            child: Column(
               children: [
-                SizedBox(
-                  width: 36,
-                  child: IconButton(
-                    icon: const Icon(Icons.arrow_back, size: 22),
-                    tooltip: 'Назад',
-                    padding: EdgeInsets.zero,
-                    onPressed: state.canGoBack ? () => state.goBack() : null,
+                if (state.isIndexing)
+                  ValueListenableBuilder<double>(
+                    valueListenable: state.indexProgress,
+                    builder: (_, progress, __) => SizedBox(
+                      height: 2,
+                      child: LinearProgressIndicator(
+                        value: progress == 0 ? null : progress,
+                      ),
+                    ),
                   ),
+                Expanded(
+                  // Show spinner when either books list or chapter text is loading,
+                  // or when verses haven't been populated yet (initial cold start).
+                  child: (state.isLoadingText || state.isLoadingBooks)
+                      ? const Center(child: CircularProgressIndicator())
+                      : state.error != null
+                          ? Center(child: Text('Ошибка: ${state.error}'))
+                          : state.verses.isEmpty
+                              ? const Center(child: CircularProgressIndicator())
+                              : _buildText(state),
                 ),
-                SizedBox(
-                  width: 36,
-                  child: IconButton(
-                    icon: const Icon(Icons.arrow_forward, size: 22),
-                    tooltip: 'Вперёд',
-                    padding: EdgeInsets.zero,
-                    onPressed: state.canGoForward ? () => state.goForward() : null,
-                  ),
-                ),
-                IconButton(icon: const Icon(Icons.search), onPressed: _openSearch),
-                IconButton(
-                  icon: Icon(state.textSelectionEnabled
-                      ? Icons.content_copy
-                      : Icons.content_copy_outlined),
-                  tooltip: state.textSelectionEnabled
-                      ? 'Выделение текста (вкл)'
-                      : 'Выделение текста (выкл)',
-                  onPressed: () => state.setTextSelectionEnabled(
-                      !state.textSelectionEnabled),
-                ),
-                IconButton(
-                    icon: const Icon(Icons.settings), onPressed: _showSettings),
               ],
             ),
-          ],
+          ),
         ),
-        body: Column(
-          children: [
-            if (state.isIndexing)
-              LinearProgressIndicator(
-                value: state.indexProgress == 0 ? null : state.indexProgress,
-                minHeight: 2,
-              ),
-            Expanded(
-              child: state.isLoadingText
-                  ? const Center(child: CircularProgressIndicator())
-                  : state.error != null
-                      ? Center(child: Text('Ошибка: ${state.error}'))
-                      : _buildText(state),
-            ),
-          ],
-        ),
-      )));
+    );
   }
 
   Widget _buildText(AppState state) {
@@ -349,7 +366,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                 Padding(
                   padding: const EdgeInsets.only(top: 20, bottom: 4),
                   child: Text(
-                    'Глава ${verse.chapter}',
+                    'Κεφάλαιο ${verse.chapter}',
                     style: TextStyle(
                       fontSize: state.fontSize + 2,
                       fontWeight: FontWeight.bold,
@@ -468,23 +485,13 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
   // ── Verse long-press context menu ──────────────────────────────────────────
   void _showVerseMenu(VerseModel verse) {
     HapticFeedback.mediumImpact();
-    final anim = context.read<AppState>().animationsEnabled;
     showGeneralDialog(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'verse-menu',
       barrierColor: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.26),
-      transitionDuration: anim ? const Duration(milliseconds: 180) : Duration.zero,
-      transitionBuilder: (ctx, animation, _, child) {
-        if (!anim) return child;
-        return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, -1),
-            end: Offset.zero,
-          ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
-          child: child,
-        );
-      },
+      transitionDuration: Duration.zero,
+      transitionBuilder: (ctx, animation, _, child) => child,
       pageBuilder: (ctx, _, __) {
         final cs = Theme.of(ctx).colorScheme;
         final state = context.read<AppState>();
@@ -740,10 +747,10 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.sell_outlined, size: 14, color: cs.secondary),
-            const SizedBox(width: 4),
+            Icon(Icons.sell_outlined, size: 22, color: cs.secondary),
+            const SizedBox(width: 6),
             Text('Создать тег',
-                style: TextStyle(fontSize: 12, color: cs.secondary)),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: cs.secondary)),
           ],
         ),
       );
@@ -892,7 +899,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
     // Ensure "Теги" folder exists
     final folderId = await notes.ensureFolder('Теги');
 
-    // Find or create the tag note
+    // Find or create the tag note — always ensure it lives in "Теги" folder
     var tagNote = notes.findNoteByTitle(tag.name);
     if (tagNote == null) {
       tagNote = await notes.createNoteWithContent(
@@ -901,6 +908,11 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
         folderId: folderId,
       );
     } else {
+      // If the note exists but is NOT in the "Теги" folder, move it there
+      if (tagNote.folderId != folderId) {
+        await notes.moveNoteToFolder(tagNote.id, folderId);
+        tagNote = tagNote.copyWith(folderId: folderId);
+      }
       // Append quote if not already present (avoid duplicates)
       if (!tagNote.content.contains('[[$ref]]')) {
         final updated = tagNote.copyWith(
@@ -1338,6 +1350,18 @@ class _TagManagerSheetState extends State<_TagManagerSheet> {
       );
     } else {
       await widget.notes.createTag(name, colorValue: _selectedColor);
+      // Ensure a corresponding note exists in the "Теги" folder
+      final folderId = await widget.notes.ensureFolder('Теги');
+      final existing = widget.notes.findNoteByTitle(name);
+      if (existing == null) {
+        await widget.notes.createNoteWithContent(
+          title: name,
+          content: '',
+          folderId: folderId,
+        );
+      } else if (existing.folderId != folderId) {
+        await widget.notes.moveNoteToFolder(existing.id, folderId);
+      }
     }
 
     _nameCtrl.clear();

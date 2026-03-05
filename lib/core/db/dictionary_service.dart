@@ -6,13 +6,12 @@
 //
 // Все четыре базы имеют таблицу: dictionary(topic TEXT, definition TEXT).
 
-import 'package:sqflite/sqflite.dart';
 import '../models/models.dart';
-import 'db_service.dart' show normalizeGreek;
+import 'db_service.dart';
 
 class DictionaryService {
-  final Map<String, Database> _dbs;
-  DictionaryService(this._dbs);
+  final DBService _dbService;
+  DictionaryService(this._dbService);
 
   static const _dictionaryTitles = <String, String>{
     'strongs': 'Словарь Стронга (СтрДв)',
@@ -23,6 +22,7 @@ class DictionaryService {
     'dvor': 'Словарь Дворецкого',
     'lsj': 'LSJ',
     'cambridge': 'Cambridge Dictionary',
+    'sece': 'SECE (Strong\'s Enhanced)',
   };
 
   // ── Список доступных словарей ─────────────────────────────────────────────
@@ -53,7 +53,8 @@ class DictionaryService {
         const DictionaryMeta(
           id: 'morph',
           title: 'Морфологический греко-английский',
-          description: 'Формы слов, словарная форма и базовые грамматические метки.',
+          description:
+              'Формы слов, словарная форма и базовые грамматические метки.',
         ),
         const DictionaryMeta(
           id: 'dvor',
@@ -70,7 +71,13 @@ class DictionaryService {
           title: 'Cambridge Dictionary',
           description: 'Английский словарь для lookup английских слов.',
         ),
-      ].where((m) => _dbs.containsKey(m.id)).toList();
+        const DictionaryMeta(
+          id: 'sece',
+          title: "SECE (Strong's Enhanced)",
+          description: "Strong's Enhanced Complete Exhaustive concordance "
+              "with English definitions and morphology.",
+        ),
+      ].where((m) => _dbService.dictDbs.containsKey(m.id)).toList();
 
   // ── Страница записей ──────────────────────────────────────────────────────
   /// [searchInContent] — если false (по умолчанию), ищем только по topic.
@@ -78,10 +85,10 @@ class DictionaryService {
     required String dictionaryId,
     String? query,
     bool searchInContent = false,
-    int limit  = 50,
+    int limit = 50,
     int offset = 0,
   }) async {
-    final db = _dbs[dictionaryId];
+    final db = _dbService.dictDbs[dictionaryId];
     if (db == null) return [];
 
     final List<Map<String, dynamic>> rows;
@@ -89,14 +96,12 @@ class DictionaryService {
       final q = '%${query.trim()}%';
       final sql = searchInContent
           ? 'SELECT topic, definition FROM dictionary '
-            'WHERE topic LIKE ? OR definition LIKE ? '
-            'ORDER BY topic LIMIT ? OFFSET ?'
+              'WHERE topic LIKE ? OR definition LIKE ? '
+              'ORDER BY topic LIMIT ? OFFSET ?'
           : 'SELECT topic, definition FROM dictionary '
-            'WHERE topic LIKE ? '
-            'ORDER BY topic LIMIT ? OFFSET ?';
-      final args = searchInContent
-          ? [q, q, limit, offset]
-          : [q, limit, offset];
+              'WHERE topic LIKE ? '
+              'ORDER BY topic LIMIT ? OFFSET ?';
+      final args = searchInContent ? [q, q, limit, offset] : [q, limit, offset];
       rows = await db.rawQuery(sql, args);
     } else {
       rows = await db.rawQuery(
@@ -113,7 +118,7 @@ class DictionaryService {
     String? query,
     bool searchInContent = false,
   }) async {
-    final db = _dbs[dictionaryId];
+    final db = _dbService.dictDbs[dictionaryId];
     if (db == null) return 0;
 
     final List<Map<String, dynamic>> rows;
@@ -121,7 +126,7 @@ class DictionaryService {
       final q = '%${query.trim()}%';
       final sql = searchInContent
           ? 'SELECT COUNT(*) AS cnt FROM dictionary '
-            'WHERE topic LIKE ? OR definition LIKE ?'
+              'WHERE topic LIKE ? OR definition LIKE ?'
           : 'SELECT COUNT(*) AS cnt FROM dictionary WHERE topic LIKE ?';
       rows = await db.rawQuery(sql, searchInContent ? [q, q] : [q]);
     } else {
@@ -130,14 +135,29 @@ class DictionaryService {
     return (rows.first['cnt'] as int?) ?? 0;
   }
 
-  // ── Поиск по Стронгу (только словарь strongs) ────────────────────────────
-  Future<DictionaryEntry?> fetchByStrongs(String strongs) async {
-    final db = _dbs['strongs'];
-    if (db == null) return null;
+  // ── Поиск по Стронгу ─────────────────────────────────────────────────────
+  /// When [language] is 'en', prefers SECE dictionary; falls back to strongs.
+  Future<DictionaryEntry?> fetchByStrongs(String strongs, {String language = 'ru'}) async {
     final clean = strongs.replaceAll(RegExp(r'^[A-Za-z]+'), '');
-    final rows  = await db.rawQuery(
+    final topic = 'G$clean';
+
+    // EN: prefer SECE dictionary
+    if (language == 'en') {
+      final sece = _dbService.dictDbs['sece'];
+      if (sece != null) {
+        final rows = await sece.rawQuery(
+          'SELECT topic, definition FROM dictionary WHERE topic=? LIMIT 1',
+          [topic],
+        );
+        if (rows.isNotEmpty) return DictionaryEntry.fromMap(rows.first);
+      }
+    }
+
+    final db = _dbService.dictDbs['strongs'];
+    if (db == null) return null;
+    final rows = await db.rawQuery(
       'SELECT topic, definition FROM dictionary WHERE topic=? LIMIT 1',
-      ['G$clean'],
+      [topic],
     );
     if (rows.isEmpty) return null;
     return DictionaryEntry.fromMap(rows.first);
@@ -162,7 +182,7 @@ class DictionaryService {
 
     final hits = <DictionaryLookupHit>[];
     for (final id in dictionaryIds) {
-      final db = _dbs[id];
+      final db = _dbService.dictDbs[id];
       if (db == null) continue;
 
       // 1) Exact match on topic

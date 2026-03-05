@@ -49,7 +49,9 @@ class NotesDB {
   Future<void> init({String? basePath}) async {
     final dir = basePath ?? await getDatabasesPath();
     final path = join(dir, 'notes.db');
-    _db = await openDatabase(path, version: 6,
+    _db = await openDatabase(
+      path,
+      version: 7,
       onCreate: (db, _) async {
         await _createV1Tables(db);
         await _createV2Tables(db);
@@ -57,6 +59,7 @@ class NotesDB {
         await _createV4Tables(db);
         await _createV5Tables(db);
         await _createV6Tables(db);
+        await _createV7Tables(db);
         for (final t in _defaultTemplates) {
           await db.insert('templates', t.toMap());
         }
@@ -67,6 +70,7 @@ class NotesDB {
         if (oldV < 4) await _createV4Tables(db);
         if (oldV < 5) await _createV5Tables(db);
         if (oldV < 6) await _createV6Tables(db);
+        if (oldV < 7) await _createV7Tables(db);
       },
     );
   }
@@ -205,16 +209,19 @@ class NotesDB {
     try {
       final rows = await db.query('parallel_verses');
       for (final r in rows) {
-        await db.insert('cross_refs', {
-          'id': r['id'],
-          'book_a': r['source_book'],
-          'chapter_a': r['source_chapter'],
-          'verse_a': r['source_verse'],
-          'book_b': r['target_book'],
-          'chapter_b': r['target_chapter'],
-          'verse_b': r['target_verse'],
-          'created_at': DateTime.now().toIso8601String(),
-        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        await db.insert(
+            'cross_refs',
+            {
+              'id': r['id'],
+              'book_a': r['source_book'],
+              'chapter_a': r['source_chapter'],
+              'verse_a': r['source_verse'],
+              'book_b': r['target_book'],
+              'chapter_b': r['target_chapter'],
+              'verse_b': r['target_verse'],
+              'created_at': DateTime.now().toIso8601String(),
+            },
+            conflictAlgorithm: ConflictAlgorithm.ignore);
       }
       await db.execute('DROP TABLE IF EXISTS parallel_verses');
     } catch (_) {
@@ -272,6 +279,17 @@ class NotesDB {
     ''');
   }
 
+  /// V7 – add color_value column to note_folders for folder colors
+  static Future<void> _createV7Tables(Database db) async {
+    try {
+      await db.execute(
+        'ALTER TABLE note_folders ADD COLUMN color_value INTEGER NOT NULL DEFAULT 4282735204',
+      );
+    } catch (_) {
+      // Column already exists — ignore
+    }
+  }
+
   // ── Notes CRUD ────────────────────────────────────────────────────────────
 
   Future<List<NoteModel>> getAllNotes() async {
@@ -324,8 +342,8 @@ class NotesDB {
   }
 
   Future<void> updateNote(NoteModel note) async {
-    await _db!.update('notes', note.toMap(),
-        where: 'id=?', whereArgs: [note.id]);
+    await _db!
+        .update('notes', note.toMap(), where: 'id=?', whereArgs: [note.id]);
   }
 
   Future<void> deleteNote(String id) async {
@@ -346,13 +364,16 @@ class NotesDB {
   // ── Note links ────────────────────────────────────────────────────────────
 
   Future<void> setNoteLinks(String sourceId, List<String> targetIds) async {
-    await _db!.delete('note_links',
-        where: 'source_id=?', whereArgs: [sourceId]);
+    await _db!
+        .delete('note_links', where: 'source_id=?', whereArgs: [sourceId]);
     for (final tid in targetIds) {
-      await _db!.insert('note_links', {
-        'source_id': sourceId,
-        'target_id': tid,
-      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      await _db!.insert(
+          'note_links',
+          {
+            'source_id': sourceId,
+            'target_id': tid,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore);
     }
   }
 
@@ -374,8 +395,7 @@ class NotesDB {
   }
 
   Future<NoteTemplate?> getTemplate(String id) async {
-    final rows = await _db!.query('templates',
-        where: 'id=?', whereArgs: [id]);
+    final rows = await _db!.query('templates', where: 'id=?', whereArgs: [id]);
     return rows.isEmpty ? null : NoteTemplate.fromMap(rows.first);
   }
 
@@ -416,8 +436,8 @@ class NotesDB {
   }
 
   Future<void> updateVerseComment(VerseComment c) async {
-    await _db!.update('verse_comments', c.toMap(),
-        where: 'id=?', whereArgs: [c.id]);
+    await _db!
+        .update('verse_comments', c.toMap(), where: 'id=?', whereArgs: [c.id]);
   }
 
   Future<void> deleteVerseComment(String id) async {
@@ -490,16 +510,24 @@ class NotesDB {
       '  OR '
       '  (book_a=? AND chapter_a=? AND verse_a=? AND book_b=? AND chapter_b=? AND verse_b=?)',
       [
-        sourceBook, sourceChapter, sourceVerse,
-        targetBook, targetChapter, targetVerse,
-        targetBook, targetChapter, targetVerse,
-        sourceBook, sourceChapter, sourceVerse,
+        sourceBook,
+        sourceChapter,
+        sourceVerse,
+        targetBook,
+        targetChapter,
+        targetVerse,
+        targetBook,
+        targetChapter,
+        targetVerse,
+        sourceBook,
+        sourceChapter,
+        sourceVerse,
       ],
     );
     if (existing.isNotEmpty) {
       // Already exists — return existing
       final row = (await _db!.query('cross_refs',
-          where: 'id=?', whereArgs: [existing.first['id']]))
+              where: 'id=?', whereArgs: [existing.first['id']]))
           .first;
       return ParallelVerse(
         id: row['id'] as String,
@@ -541,10 +569,12 @@ class NotesDB {
   Future<Set<String>> getParallelVerseKeys(int bookNumber, int chapter) async {
     final rowsA = await _db!.rawQuery(
         'SELECT DISTINCT verse_a AS v FROM cross_refs '
-        'WHERE book_a=? AND chapter_a=?', [bookNumber, chapter]);
+        'WHERE book_a=? AND chapter_a=?',
+        [bookNumber, chapter]);
     final rowsB = await _db!.rawQuery(
         'SELECT DISTINCT verse_b AS v FROM cross_refs '
-        'WHERE book_b=? AND chapter_b=?', [bookNumber, chapter]);
+        'WHERE book_b=? AND chapter_b=?',
+        [bookNumber, chapter]);
     final set = <String>{};
     for (final r in rowsA) {
       set.add('$bookNumber:$chapter:${r['v']}');
@@ -599,8 +629,8 @@ class NotesDB {
     return {for (final c in list) '${c.verse}:${c.wordNumber}': c};
   }
 
-  Future<WordComment> addWordComment(
-      int bookNumber, int chapter, int verse, int wordNumber, String text) async {
+  Future<WordComment> addWordComment(int bookNumber, int chapter, int verse,
+      int wordNumber, String text) async {
     final c = WordComment(
       id: _uuid.v4(),
       bookNumber: bookNumber,
@@ -624,8 +654,7 @@ class NotesDB {
   Future<List<WordMarkup>> getMarkupsForChapter(
       int bookNumber, int chapter) async {
     final rows = await _db!.query('word_markup',
-        where: 'book_number=? AND chapter=?',
-        whereArgs: [bookNumber, chapter]);
+        where: 'book_number=? AND chapter=?', whereArgs: [bookNumber, chapter]);
     return rows.map(WordMarkup.fromMap).toList();
   }
 
@@ -654,14 +683,14 @@ class NotesDB {
 
   Future<String> createFolder(String name) async {
     final id = _uuid.v4();
-    await _db!.insert('note_folders',
-        {'id': id, 'name': name, 'parent_id': null});
+    await _db!
+        .insert('note_folders', {'id': id, 'name': name, 'parent_id': null});
     return id;
   }
 
   Future<void> renameFolder(String id, String name) async {
-    await _db!.update('note_folders', {'name': name},
-        where: 'id=?', whereArgs: [id]);
+    await _db!
+        .update('note_folders', {'name': name}, where: 'id=?', whereArgs: [id]);
   }
 
   Future<void> deleteFolder(String id) async {
@@ -669,6 +698,11 @@ class NotesDB {
     await _db!.update('notes', {'folder_id': null},
         where: 'folder_id=?', whereArgs: [id]);
     await _db!.delete('note_folders', where: 'id=?', whereArgs: [id]);
+  }
+
+  Future<void> updateFolderColor(String id, int colorValue) async {
+    await _db!.update('note_folders', {'color_value': colorValue},
+        where: 'id=?', whereArgs: [id]);
   }
 
   Future<void> moveNoteToFolder(String noteId, String? folderId) async {
@@ -681,7 +715,8 @@ class NotesDB {
         ? await _db!.query('notes',
             where: 'folder_id IS NULL', orderBy: 'updated_at DESC')
         : await _db!.query('notes',
-            where: 'folder_id=?', whereArgs: [folderId],
+            where: 'folder_id=?',
+            whereArgs: [folderId],
             orderBy: 'updated_at DESC');
     return rows.map(NoteModel.fromMap).toList();
   }
@@ -724,6 +759,28 @@ class NotesDB {
     return rows.map(NoteTag.fromMap).toList();
   }
 
+  /// Bulk-fetch all note→tags associations in one SQL query.
+  /// Used by NotesProvider to build the sync cache efficiently.
+  Future<Map<String, List<NoteTag>>> getAllNoteTagsMap() async {
+    final rows = await _db!.rawQuery('''
+      SELECT nt.note_id, t.id, t.name, t.color_value
+      FROM note_tags nt
+      JOIN tags t ON t.id = nt.tag_id
+    ''');
+
+    final result = <String, List<NoteTag>>{};
+    for (final row in rows) {
+      final noteId = row['note_id'] as String;
+      final tag = NoteTag(
+        id: row['id'] as String,
+        name: row['name'] as String? ?? '',
+        colorValue: row['color_value'] as int? ?? 0xFF2196F3,
+      );
+      result.putIfAbsent(noteId, () => []).add(tag);
+    }
+    return result;
+  }
+
   Future<void> addTagToNote(String noteId, String tagId) async {
     await _db!.insert('note_tags', {'note_id': noteId, 'tag_id': tagId},
         conflictAlgorithm: ConflictAlgorithm.ignore);
@@ -739,8 +796,7 @@ class NotesDB {
   Future<List<VerseTag>> getVerseTagsForChapter(
       int bookNumber, int chapter) async {
     final rows = await _db!.query('verse_tags',
-        where: 'book_number=? AND chapter=?',
-        whereArgs: [bookNumber, chapter]);
+        where: 'book_number=? AND chapter=?', whereArgs: [bookNumber, chapter]);
     return rows.map(VerseTag.fromMap).toList();
   }
 
@@ -778,7 +834,8 @@ class NotesDB {
   /// Get all verses tagged with a specific tag
   Future<List<VerseTag>> getVersesForTag(String tagId) async {
     final rows = await _db!.query('verse_tags',
-        where: 'tag_id=?', whereArgs: [tagId],
+        where: 'tag_id=?',
+        whereArgs: [tagId],
         orderBy: 'book_number, chapter, verse');
     return rows.map(VerseTag.fromMap).toList();
   }
@@ -787,8 +844,7 @@ class NotesDB {
   Future<Map<int, List<String>>> getVerseTagIdsForChapter(
       int bookNumber, int chapter) async {
     final rows = await _db!.query('verse_tags',
-        where: 'book_number=? AND chapter=?',
-        whereArgs: [bookNumber, chapter]);
+        where: 'book_number=? AND chapter=?', whereArgs: [bookNumber, chapter]);
     final map = <int, List<String>>{};
     for (final r in rows) {
       final v = r['verse'] as int;

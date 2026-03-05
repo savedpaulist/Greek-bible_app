@@ -16,6 +16,7 @@ class _SearchCache {
   static List<_RichResult> results = [];
   static List<DictionaryLookupHit> dictHits = [];
   static bool searched = false;
+
   /// Saved multi-word terms: list of (type, text) pairs.
   static List<(SearchTermType, String)> multiTerms = [];
   static double scrollOffset = 0;
@@ -36,11 +37,11 @@ class _SearchScreenState extends State<SearchScreen> {
   // Multi-word search
   final List<_TermInput> _terms = [_TermInput()];
 
-  List<_RichResult> _results  = [];
+  List<_RichResult> _results = [];
   List<DictionaryLookupHit> _dictHits = [];
-  bool _loading   = false;
-  bool _searched  = false;
-  int  _searchGen = 0;  // generation counter for cancellation
+  bool _loading = false;
+  bool _searched = false;
+  int _searchGen = 0; // generation counter for cancellation
 
   late final ScrollController _scrollCtrl;
 
@@ -48,13 +49,15 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     // Restore cached search state.
-    _mode     = _SearchCache.mode;
+    _mode = _SearchCache.mode;
     _ctrl.text = _SearchCache.queryText;
-    _results   = _SearchCache.results;
-    _dictHits  = _SearchCache.dictHits;
-    _searched  = _SearchCache.searched;
+    _results = _SearchCache.results;
+    _dictHits = _SearchCache.dictHits;
+    _searched = _SearchCache.searched;
     if (_SearchCache.multiTerms.isNotEmpty) {
-      for (final t in _terms) { t.ctrl.dispose(); }
+      for (final t in _terms) {
+        t.ctrl.dispose();
+      }
       _terms.clear();
       for (final (type, text) in _SearchCache.multiTerms) {
         final ti = _TermInput()..type = type;
@@ -62,8 +65,8 @@ class _SearchScreenState extends State<SearchScreen> {
         _terms.add(ti);
       }
     }
-    _scrollCtrl = ScrollController(
-        initialScrollOffset: _SearchCache.scrollOffset);
+    _scrollCtrl =
+        ScrollController(initialScrollOffset: _SearchCache.scrollOffset);
     _scrollCtrl.addListener(_onScroll);
   }
 
@@ -74,14 +77,12 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void dispose() {
     // Save state to cache before dispose.
-    _SearchCache.mode       = _mode;
-    _SearchCache.queryText  = _ctrl.text;
-    _SearchCache.results    = _results;
-    _SearchCache.dictHits   = _dictHits;
-    _SearchCache.searched   = _searched;
-    _SearchCache.multiTerms  = _terms
-        .map((t) => (t.type, t.ctrl.text))
-        .toList();
+    _SearchCache.mode = _mode;
+    _SearchCache.queryText = _ctrl.text;
+    _SearchCache.results = _results;
+    _SearchCache.dictHits = _dictHits;
+    _SearchCache.searched = _searched;
+    _SearchCache.multiTerms = _terms.map((t) => (t.type, t.ctrl.text)).toList();
     if (_scrollCtrl.hasClients) {
       _SearchCache.scrollOffset = _scrollCtrl.offset;
     }
@@ -97,14 +98,19 @@ class _SearchScreenState extends State<SearchScreen> {
   // ── Search dispatcher ──────────────────────────────────────────────────────
   void _cancelSearch() {
     _searchGen++;
-    setState(() { _loading = false; });
+    setState(() {
+      _loading = false;
+    });
   }
 
   Future<void> _search() async {
     final db = context.read<AppState>().db;
     final appState = context.read<AppState>();
     final dictProvider = context.read<DictionaryProvider>();
-    setState(() { _loading = true; _results = []; });
+    setState(() {
+      _loading = true;
+      _results = [];
+    });
     _SearchCache.scrollOffset = 0;
     if (_scrollCtrl.hasClients) _scrollCtrl.jumpTo(0);
     final gen = ++_searchGen;
@@ -116,7 +122,10 @@ class _SearchScreenState extends State<SearchScreen> {
       switch (_mode) {
         case _SearchMode.word:
           final q = _ctrl.text.trim();
-          if (q.isEmpty) { setState(() => _loading = false); return; }
+          if (q.isEmpty) {
+            setState(() => _loading = false);
+            return;
+          }
           historyEntry = q;
           // Auto-detect Strongs: digits only or G/Г prefix + digits
           final strongsMatch = RegExp(r'^[GgГг]?(\d+)$').firstMatch(q);
@@ -133,14 +142,20 @@ class _SearchScreenState extends State<SearchScreen> {
               .where((t) => t.ctrl.text.trim().isNotEmpty)
               .map((t) => SearchTerm(type: t.type, value: t.ctrl.text.trim()))
               .toList();
-          if (terms.isEmpty) { setState(() => _loading = false); return; }
+          if (terms.isEmpty) {
+            setState(() => _loading = false);
+            return;
+          }
           raw = await db.searchMultiTerm(terms);
           _dictHits = [];
           break;
 
         case _SearchMode.allDictionaries:
           final q = _ctrl.text.trim();
-          if (q.isEmpty) { setState(() => _loading = false); return; }
+          if (q.isEmpty) {
+            setState(() => _loading = false);
+            return;
+          }
           historyEntry = q;
           raw = [];
           _dictHits = await dictProvider.lookupAcrossDictionaries(q);
@@ -158,15 +173,19 @@ class _SearchScreenState extends State<SearchScreen> {
 
       // Load full verses in batch (single SQL instead of N sequential queries)
       if (gen != _searchGen) return; // cancelled
-      final refs = raw.map((r) =>
-          (book: r.bookNumber, chapter: r.chapter, verse: r.verse)).toList();
+      final refs = raw
+          .map((r) => (book: r.bookNumber, chapter: r.chapter, verse: r.verse))
+          .toList();
       final batchWords = await db.getVerseWordsBatch(refs);
       final rich = <_RichResult>[];
       for (final r in raw) {
         final key = '${r.bookNumber}:${r.chapter}:${r.verse}';
         rich.add(_RichResult(result: r, verseWords: batchWords[key] ?? []));
       }
-      setState(() { _results = rich; _searched = true; });
+      setState(() {
+        _results = rich;
+        _searched = true;
+      });
 
       // Inform user if index is still building (results may be empty/partial)
       if (mounted && raw.isEmpty && appState.isIndexing) {
@@ -175,8 +194,8 @@ class _SearchScreenState extends State<SearchScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Ошибка: $e')));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -214,8 +233,10 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     if (_mode == _SearchMode.multiWord) {
       return _terms
-          .where((t) => t.type == SearchTermType.strongs && t.ctrl.text.isNotEmpty)
-          .map((t) => t.ctrl.text.trim().replaceAll(RegExp(r'^[GgА-Яа-яГг]+'), ''))
+          .where(
+              (t) => t.type == SearchTermType.strongs && t.ctrl.text.isNotEmpty)
+          .map((t) =>
+              t.ctrl.text.trim().replaceAll(RegExp(r'^[GgА-Яа-яГг]+'), ''))
           .toList();
     }
     return [];
@@ -229,7 +250,11 @@ class _SearchScreenState extends State<SearchScreen> {
       appBar: AppBar(title: const Text('Поиск')),
       body: Column(children: [
         if (state.isIndexing)
-          LinearProgressIndicator(value: state.indexProgress, minHeight: 2),
+          ValueListenableBuilder<double>(
+            valueListenable: state.indexProgress,
+            builder: (context, progress, _) =>
+                LinearProgressIndicator(value: progress, minHeight: 6),
+          ),
 
         // Mode chips
         SingleChildScrollView(
@@ -240,7 +265,7 @@ class _SearchScreenState extends State<SearchScreen> {
             const SizedBox(width: 8),
             _chip('Несколько слов', _SearchMode.multiWord),
             const SizedBox(width: 8),
-            _chip('Все словари',  _SearchMode.allDictionaries),
+            _chip('Все словари', _SearchMode.allDictionaries),
           ]),
         ),
 
@@ -252,7 +277,8 @@ class _SearchScreenState extends State<SearchScreen> {
         // Results
         Expanded(
           child: _loading
-              ? Center(child: Column(
+              ? Center(
+                  child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const CircularProgressIndicator(),
@@ -267,8 +293,11 @@ class _SearchScreenState extends State<SearchScreen> {
               : (_results.isEmpty && _dictHits.isEmpty && !_searched)
                   ? _buildHistory(state)
                   : (_results.isEmpty && _dictHits.isEmpty)
-                      ? Center(child: Text('Ничего не найдено',
-                          style: TextStyle(color: Theme.of(context).colorScheme.secondary)))
+                      ? Center(
+                          child: Text('Ничего не найдено',
+                              style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.secondary)))
                       : _SearchResultsBody(
                           results: _results,
                           dictionaryHits: _dictHits,
@@ -283,8 +312,10 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildHistory(AppState state) {
     if (state.searchHistory.isEmpty) {
-      return Center(child: Text('Введите запрос',
-          style: TextStyle(color: Theme.of(context).colorScheme.secondary)));
+      return Center(
+          child: Text('Введите запрос',
+              style:
+                  TextStyle(color: Theme.of(context).colorScheme.secondary)));
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -337,59 +368,70 @@ class _SearchScreenState extends State<SearchScreen> {
       case _SearchMode.multiWord:
         return [
           ..._terms.asMap().entries.map((e) => _TermRow(
-            input: e.value,
-            index: e.key,
-            onRemove: _terms.length > 1
-                ? () => setState(() { _terms[e.key].ctrl.dispose(); _terms.removeAt(e.key); })
-                : null,
-          )),
+                input: e.value,
+                index: e.key,
+                onRemove: _terms.length > 1
+                    ? () => setState(() {
+                          _terms[e.key].ctrl.dispose();
+                          _terms.removeAt(e.key);
+                        })
+                    : null,
+              )),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             child: Row(children: [
               TextButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text('Ещё условие'),
-                onPressed: () => setState(() => _terms.add(_TermInput()))),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Ещё условие'),
+                  onPressed: () => setState(() => _terms.add(_TermInput()))),
               const Spacer(),
               ElevatedButton.icon(
-                icon: const Icon(Icons.search),
-                label: const Text('Найти (в одном стихе)'),
-                onPressed: _search),
+                  icon: const Icon(Icons.search),
+                  label: const Text('Найти (в одном стихе)'),
+                  onPressed: _search),
             ]),
           ),
         ];
 
       default:
-        return [Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          child: TextField(
-            controller: _ctrl,
-            autofocus: true,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: _mode == _SearchMode.allDictionaries
-                  ? 'Слово для поиска по всем словарям'
-                  : 'Слово или номер Стронга (напр. 1234, G1234)',
-              hintStyle: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.38),
-                fontWeight: FontWeight.w400,
+        return [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: TextField(
+              controller: _ctrl,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: _mode == _SearchMode.allDictionaries
+                    ? 'Слово для поиска по всем словарям'
+                    : 'Слово или номер Стронга (напр. 1234, G1234)',
+                hintStyle: TextStyle(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.38),
+                  fontWeight: FontWeight.w400,
+                ),
+                border: const OutlineInputBorder(),
+                suffixIcon: IconButton(
+                    icon: const Icon(Icons.search), onPressed: _search),
               ),
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(icon: const Icon(Icons.search), onPressed: _search),
+              onSubmitted: (_) => _search(),
             ),
-            onSubmitted: (_) => _search(),
-          ),
-        )];
+          )
+        ];
     }
   }
 
   Widget _chip(String label, _SearchMode m) => ChoiceChip(
-    label: Text(label),
-    selected: _mode == m,
-    onSelected: (_) => setState(() {
-      _mode = m; _results = []; _searched = false;
-    }),
-  );
+        label: Text(label),
+        selected: _mode == m,
+        onSelected: (_) => setState(() {
+          _mode = m;
+          _results = [];
+          _searched = false;
+        }),
+      );
 }
 
 class _SearchResultsBody extends StatelessWidget {
@@ -415,7 +457,8 @@ class _SearchResultsBody extends StatelessWidget {
         if (dictionaryHits.isNotEmpty) ...[
           const Padding(
             padding: EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: Text('Словари', style: TextStyle(fontWeight: FontWeight.bold)),
+            child:
+                Text('Словари', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
           ...dictionaryHits.map((hit) => ListTile(
                 title: Text(hit.entry.term),
@@ -446,8 +489,8 @@ class _TermInput {
 }
 
 class _TermRow extends StatefulWidget {
-  final _TermInput  input;
-  final int         index;
+  final _TermInput input;
+  final int index;
   final VoidCallback? onRemove;
   const _TermRow({required this.input, required this.index, this.onRemove});
   @override
@@ -463,7 +506,7 @@ class _TermRowState extends State<_TermRow> {
         // Type toggle
         SegmentedButton<SearchTermType>(
           segments: const [
-            ButtonSegment(value: SearchTermType.word,    label: Text('Слово')),
+            ButtonSegment(value: SearchTermType.word, label: Text('Слово')),
             ButtonSegment(value: SearchTermType.strongs, label: Text('G#')),
           ],
           selected: {widget.input.type},
@@ -480,9 +523,13 @@ class _TermRowState extends State<_TermRow> {
             textInputAction: TextInputAction.next,
             decoration: InputDecoration(
               hintText: widget.input.type == SearchTermType.strongs
-                  ? 'Номер Стронга' : 'Греческое слово',
+                  ? 'Номер Стронга'
+                  : 'Греческое слово',
               hintStyle: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.38),
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.38),
                 fontWeight: FontWeight.w400,
               ),
               border: const OutlineInputBorder(),
@@ -491,7 +538,8 @@ class _TermRowState extends State<_TermRow> {
           ),
         ),
         if (widget.onRemove != null)
-          IconButton(icon: const Icon(Icons.remove_circle_outline),
+          IconButton(
+              icon: const Icon(Icons.remove_circle_outline),
               onPressed: widget.onRemove),
       ]),
     );
@@ -500,19 +548,21 @@ class _TermRowState extends State<_TermRow> {
 
 // ── Rich result ────────────────────────────────────────────────────────────
 class _RichResult {
-  final SearchResult    result;
+  final SearchResult result;
   final List<WordModel> verseWords;
+
   /// Pre-normalized word forms (computed once, used in _isMatch).
-  final List<String>    normalizedWords;
+  final List<String> normalizedWords;
   _RichResult({required this.result, required this.verseWords})
-      : normalizedWords = verseWords.map((w) => normalizeGreek(w.word)).toList();
+      : normalizedWords =
+            verseWords.map((w) => normalizeGreek(w.word)).toList();
 }
 
 // ── Results list ─────────────────────────────────────────────────────────────
 class _ResultsList extends StatelessWidget {
   final List<_RichResult> results;
-  final List<String>      matchNorms;
-  final List<String>      matchStrongs;
+  final List<String> matchNorms;
+  final List<String> matchStrongs;
 
   const _ResultsList({
     required this.results,
@@ -524,19 +574,22 @@ class _ResultsList extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(children: [
       Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Text('Найдено: ${results.length}${results.length >= 300 ? '+' : ''}',
-            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.secondary)))),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                  'Найдено: ${results.length}${results.length >= 300 ? '+' : ''}',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.secondary)))),
       ListView.separated(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: results.length,
         separatorBuilder: (_, __) => const Divider(height: 1, indent: 12),
         itemBuilder: (_, i) => _ResultTile(
-          rich:        results[i],
-          matchNorms:  matchNorms,
+          rich: results[i],
+          matchNorms: matchNorms,
           matchStrongs: matchStrongs,
         ),
       ),
@@ -545,11 +598,14 @@ class _ResultsList extends StatelessWidget {
 }
 
 class _ResultTile extends StatelessWidget {
-  final _RichResult    rich;
-  final List<String>   matchNorms;
-  final List<String>   matchStrongs;
+  final _RichResult rich;
+  final List<String> matchNorms;
+  final List<String> matchStrongs;
 
-  const _ResultTile({required this.rich, required this.matchNorms, required this.matchStrongs});
+  const _ResultTile(
+      {required this.rich,
+      required this.matchNorms,
+      required this.matchStrongs});
 
   bool _isMatch(WordModel w, String normWord) {
     for (final q in matchNorms) {
@@ -563,9 +619,9 @@ class _ResultTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final r   = rich.result;
-    final s   = context.read<AppState>();
-    final fs  = s.searchFontSize;
+    final r = rich.result;
+    final s = context.read<AppState>();
+    final fs = s.searchFontSize;
 
     final spans = <InlineSpan>[];
     for (int i = 0; i < rich.verseWords.length; i++) {
@@ -574,9 +630,9 @@ class _ResultTile extends StatelessWidget {
       spans.add(TextSpan(
         text: '${w.word} ',
         style: TextStyle(
-          fontSize:   matched ? fs + 1 : fs - 2,
+          fontSize: matched ? fs + 1 : fs - 2,
           fontWeight: matched ? FontWeight.bold : FontWeight.normal,
-          color:      matched
+          color: matched
               ? Theme.of(context).colorScheme.primary
               : Theme.of(context).colorScheme.onSurface,
         ),
@@ -592,16 +648,21 @@ class _ResultTile extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          SizedBox(width: 60, child: Column(children: [
-            Text(r.bookShortName,
-              style: TextStyle(fontSize: 11,
-                color: Theme.of(context).colorScheme.primary,
-                fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center),
-            Text('${r.chapter}:${r.verse}',
-              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.secondary),
-              textAlign: TextAlign.center),
-          ])),
+          SizedBox(
+              width: 60,
+              child: Column(children: [
+                Text(r.bookShortName,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center),
+                Text('${r.chapter}:${r.verse}',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.secondary),
+                    textAlign: TextAlign.center),
+              ])),
           const SizedBox(width: 8),
           Expanded(child: RichText(text: TextSpan(children: spans))),
         ]),
@@ -609,5 +670,3 @@ class _ResultTile extends StatelessWidget {
     );
   }
 }
-
-

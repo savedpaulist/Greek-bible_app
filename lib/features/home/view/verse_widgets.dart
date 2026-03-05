@@ -19,28 +19,32 @@ void dismissActiveWordOverlay() => dismissWordOverlay();
 // Verse block
 // ─────────────────────────────────────────────────────────────────────────────
 class VerseBlock extends StatelessWidget {
-  final VerseModel   verse;
-  final double       fontSize;
-  final double       criticalTextFontSize;
-  final bool         showCriticalText;
-  final dynamic      db;
+  final VerseModel verse;
+  final double fontSize;
+  final double criticalTextFontSize;
+  final bool showCriticalText;
+  final dynamic db;
   final HighlightTarget? highlight;
   final Future<void> Function(int, int, int, {String? strongs}) onBibleLink;
   final VoidCallback onClearHighlight;
   final VoidCallback? onLongPress;
-  final int          commentCount;
-  final int          parallelCount;
-  final int          tagCount;
+  final bool multiSelectMode;
+  final bool isSelected;
+  final VoidCallback? onVerseSelect;
+  final int commentCount;
+  final int parallelCount;
+  final int tagCount;
   final List<WordMarkup> markups;
   final Map<String, WordComment> wordComments;
-  final String       themeMode;
+  final String themeMode;
   final VoidCallback? onWordCommentChanged;
-  final String       fontFamily;
+  final String fontFamily;
   final CustomThemeColors customColors;
-  final double       popupFontSize;
-  final bool         animationsEnabled;
-  final bool         textSelectionEnabled;
-  final double       lineHeight;
+  final double popupFontSize;
+  final bool animationsEnabled;
+  final bool textSelectionEnabled;
+  final double lineHeight;
+  final bool showVerseNumbers;
 
   const VerseBlock({
     super.key,
@@ -57,8 +61,12 @@ class VerseBlock extends StatelessWidget {
     required this.popupFontSize,
     this.animationsEnabled = true,
     this.textSelectionEnabled = false,
+    this.showVerseNumbers = true,
     this.lineHeight = 1.55,
     this.onLongPress,
+    this.multiSelectMode = false,
+    this.isSelected = false,
+    this.onVerseSelect,
     this.commentCount = 0,
     this.parallelCount = 0,
     this.tagCount = 0,
@@ -71,11 +79,14 @@ class VerseBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final widgets = <Widget>[];
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
 
     // Verse background color from markup (kind == background, wordNumber == null)
     Color? verseBg;
-    final bgMarkup = markups.where(
-        (m) => m.kind == MarkupKind.background && m.wordNumber == null).firstOrNull;
+    final bgMarkup = markups
+        .where((m) => m.kind == MarkupKind.background && m.wordNumber == null)
+        .firstOrNull;
     if (bgMarkup != null) {
       if (bgMarkup.colorValue != null) {
         verseBg = Color(bgMarkup.colorValue!);
@@ -88,47 +99,58 @@ class VerseBlock extends StatelessWidget {
     }
 
     // Номер стиха
-    widgets.add(const Padding(
-      padding: EdgeInsets.only(right: 3),
-      child: Text(
-        '', // verse number будет добавлен ниже
-        style: TextStyle(fontWeight: FontWeight.bold),
-      ),
-    ));
-
-    // Build a map of word-level markups for quick lookup
-    final wordMarkupMap = <int, WordMarkup>{};
-    for (final m in markups) {
-      if (m.wordNumber != null) wordMarkupMap[m.wordNumber!] = m;
+    if (showVerseNumbers) {
+      widgets.add(Padding(
+        padding: const EdgeInsets.only(right: 4, bottom: 2),
+        child: Text(
+          '${verse.verse}',
+          style: TextStyle(
+            fontSize: fontSize * 0.72,
+            fontWeight: FontWeight.bold,
+            color: cs.primary.withValues(alpha: 0.65),
+          ),
+        ),
+      ));
     }
 
-    // Track whether we are inside a critical text block
-    bool inCritical = false;
-    // Track whether we're inside a brace-delimited block for hiding
-    bool inBraceBlock = false;
-
-    for (int i = 0; i < verse.words.length; i++) {
-      final w           = verse.words[i];
-      final wt          = w.word.trim();
-
-      // Detect critical text markers
-      if (wt.startsWith('n>')) { inCritical = true; }
-
-      final isCritical = inCritical || isCriticalTag(wt);
-
-      if (wt == '/n>') { inCritical = false; }
-
-      // Track brace blocks for hiding when critical text is off
-      if (wt == '{') inBraceBlock = true;
-      if (wt == '}') {
-        if (!showCriticalText) {
-          inBraceBlock = false;
-          continue; // skip the closing brace too
-        }
+    // Build separate maps for background and underline word-level markups
+    // so that both can be applied simultaneously to the same word.
+    final wordBgMap = <int, WordMarkup>{};
+    final wordUlMap = <int, WordMarkup>{};
+    for (final m in markups) {
+      if (m.wordNumber == null) continue;
+      if (m.kind == MarkupKind.background) {
+        wordBgMap[m.wordNumber!] = m;
+      } else {
+        wordUlMap[m.wordNumber!] = m;
       }
+    }
 
-      // If critical text is hidden, skip all critical words and brace content
-      if (!showCriticalText && (isCritical || inBraceBlock)) continue;
+    // ── Build punctFlags during main loop ──
+    final punctFlags = <bool>[];
+    bool inCritical = false;
+    bool inBraceBlock = false;
+    for (int i = 0; i < verse.words.length; i++) {
+      final w = verse.words[i];
+      final wt = w.word.trim();
+
+      // Track critical apparatus regions:
+      // n>LABEL starts a critical block, /n> ends it
+      // { opens brace variant block, } closes it
+      if (wt.startsWith('n>')) inCritical = true;
+      if (wt == '{') inBraceBlock = true;
+
+      // A word is "critical" if it's a tag, inside a critical region,
+      // or inside a brace block — all get uniform styling
+      final isCritical = inCritical || inBraceBlock || isCriticalTag(wt);
+
+      if (wt == '/n>') inCritical = false;
+      if (wt == '}') inBraceBlock = false;
+
+      // When critical text is hidden, skip the entire apparatus
+      if (!showCriticalText && isCritical) continue;
+
+      punctFlags.add(isPunct(w.word));
 
       final wp = isPunct(w.word);
       final nextIsPunct =
@@ -136,30 +158,32 @@ class VerseBlock extends StatelessWidget {
 
       final shouldBlink = highlight != null &&
           highlight!.chapter == verse.chapter &&
-          highlight!.verse   == verse.verse &&
+          highlight!.verse == verse.verse &&
           (highlight!.strongs == null || highlight!.strongs == w.strongs);
 
-      // Check for word-level markup (use actual wordNumber, not loop index)
-      final wMarkup = wordMarkupMap[w.wordNumber];
-      // Check for word-level comment
-      final hasWordComment = wordComments.containsKey('${verse.verse}:${w.wordNumber}');
+      final wBgMarkup = wordBgMap[w.wordNumber];
+      final wUlMarkup = wordUlMap[w.wordNumber];
+      final hasWordComment =
+          wordComments.containsKey('${verse.verse}:${w.wordNumber}');
 
       Widget tile = WordTile(
-        word:            w,
-        fontSize:        isCritical ? criticalTextFontSize : fontSize,
-        isCriticalText:  isCritical,
-        db:              db,
-        isPunct:         wp,
+        word: w,
+        fontSize: isCritical ? criticalTextFontSize : fontSize,
+        isCriticalText: isCritical,
+        db: db,
+        isPunct: wp,
         noTrailingSpace: nextIsPunct,
-        onBibleLink:     onBibleLink,
-        markup:          wMarkup,
-        hasWordComment:  hasWordComment,
-        themeMode:       themeMode,
+        onBibleLink: onBibleLink,
+        backgroundMarkup: wBgMarkup,
+        underlineMarkup: wUlMarkup,
+        hasWordComment: hasWordComment,
+        themeMode: themeMode,
         onWordCommentChanged: onWordCommentChanged,
-        fontFamily:      fontFamily,
-        customColors:    customColors,
-        popupFontSize:   popupFontSize,
-        lineHeight:      lineHeight,
+        fontFamily: fontFamily,
+        customColors: customColors,
+        popupFontSize: popupFontSize,
+        lineHeight: lineHeight,
+        interactionEnabled: !multiSelectMode,
       );
 
       if (shouldBlink && animationsEnabled) {
@@ -169,58 +193,21 @@ class VerseBlock extends StatelessWidget {
           child: tile,
         );
       } else if (shouldBlink && !animationsEnabled) {
-        // No blink — just briefly highlight then clear
         tile = Container(
           color: customColors.highlightBlink,
           child: tile,
         );
-        // Schedule clear on next frame
         WidgetsBinding.instance.addPostFrameCallback((_) => onClearHighlight());
       }
 
       widgets.add(tile);
     }
 
-    // ── Merge punctuation widgets with preceding word ────────────────────────
-    // Prevents a lone "." or "," from wrapping onto a new line.
-    final merged = <Widget>[];
-    for (int i = 0; i < widgets.length; i++) {
-      if (i > 0 && i < verse.words.length) {
-        // Find the original word for this widget index
-        // (skip hidden words — count only those that produced a widget)
-      }
-      merged.add(widgets[i]);
-    }
-    // Scan merged list and combine punct with the word before it.
+    // ── Merge punctuation widgets with preceding word ──
     final finalWidgets = <Widget>[];
     int wi = 0;
-    // Build a parallel list of whether each widget is punct
-    // We track which original word each widget came from.
-    // Since hidden words are skipped, build a bool list from the widgets
-    // that were actually added:
-    // Reconstruct isPunct flags for the visible words.
-    final punctFlags = <bool>[];
-    {
-      bool inCriticalLocal = false;
-      bool inBraceLocal = false;
-      for (int i = 0; i < verse.words.length; i++) {
-        final wt = verse.words[i].word.trim();
-        if (wt.startsWith('n>')) inCriticalLocal = true;
-        final isCritLocal = inCriticalLocal || isCriticalTag(wt);
-        if (wt == '/n>') inCriticalLocal = false;
-        if (wt == '{') inBraceLocal = true;
-        if (wt == '}') {
-          if (!showCriticalText) { inBraceLocal = false; continue; }
-        }
-        if (!showCriticalText && (isCritLocal || inBraceLocal)) continue;
-        punctFlags.add(isPunct(verse.words[i].word));
-      }
-    }
-    // Now merge: if punctFlags[wi] is true and wi > 0, wrap with previous.
-    wi = 0;
     for (int i = 0; i < widgets.length && wi < punctFlags.length; i++, wi++) {
-      if (wi < punctFlags.length && punctFlags[wi] && finalWidgets.isNotEmpty) {
-        // Merge with previous
+      if (wi > 0 && punctFlags[wi] && finalWidgets.isNotEmpty) {
         final prev = finalWidgets.removeLast();
         finalWidgets.add(Row(
           mainAxisSize: MainAxisSize.min,
@@ -231,7 +218,7 @@ class VerseBlock extends StatelessWidget {
         finalWidgets.add(widgets[i]);
       }
     }
-    // Add any remaining indicator widgets (comment count, parallel count)
+    // Add indicators
     for (int i = punctFlags.length; i < widgets.length; i++) {
       finalWidgets.add(widgets[i]);
     }
@@ -243,10 +230,12 @@ class VerseBlock extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.comment_outlined, size: fontSize * 0.55, color: customColors.indicator),
+            Icon(Icons.comment_outlined,
+                size: fontSize * 0.55, color: customColors.indicator),
             SizedBox(width: 1),
             Text('$commentCount',
-                style: TextStyle(fontSize: fontSize * 0.5, color: customColors.indicator)),
+                style: TextStyle(
+                    fontSize: fontSize * 0.5, color: customColors.indicator)),
           ],
         ),
       ));
@@ -257,10 +246,12 @@ class VerseBlock extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.compare_arrows, size: fontSize * 0.55, color: customColors.indicator),
+            Icon(Icons.compare_arrows,
+                size: fontSize * 0.55, color: customColors.indicator),
             SizedBox(width: 1),
             Text('$parallelCount',
-                style: TextStyle(fontSize: fontSize * 0.5, color: customColors.indicator)),
+                style: TextStyle(
+                    fontSize: fontSize * 0.5, color: customColors.indicator)),
           ],
         ),
       ));
@@ -271,18 +262,20 @@ class VerseBlock extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.sell, size: fontSize * 0.5, color: customColors.indicator),
+            Icon(Icons.sell,
+                size: fontSize * 0.5, color: customColors.indicator),
             SizedBox(width: 1),
             Text('$tagCount',
-                style: TextStyle(fontSize: fontSize * 0.5, color: customColors.indicator)),
+                style: TextStyle(
+                    fontSize: fontSize * 0.5, color: customColors.indicator)),
           ],
         ),
       ));
     }
 
-    return RepaintBoundary(
+    Widget result = RepaintBoundary(
       child: GestureDetector(
-        onLongPress: onLongPress,
+        onLongPress: multiSelectMode ? null : onLongPress,
         child: Container(
           padding: const EdgeInsets.only(bottom: 2),
           decoration: verseBg != null
@@ -293,12 +286,30 @@ class VerseBlock extends StatelessWidget {
               : null,
           child: textSelectionEnabled
               ? SelectionArea(
-                  child: Wrap(crossAxisAlignment: WrapCrossAlignment.end, children: finalWidgets),
+                  child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.end,
+                      children: finalWidgets),
                 )
-              : Wrap(crossAxisAlignment: WrapCrossAlignment.end, children: finalWidgets),
+              : Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.end,
+                  children: finalWidgets),
         ),
       ),
     );
+
+    if (multiSelectMode) {
+      result = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onVerseSelect,
+        child: ColoredBox(
+          color: isSelected
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.15)
+              : Colors.transparent,
+          child: result,
+        ),
+      );
+    }
+    return result;
   }
 }
 
@@ -351,21 +362,23 @@ class _BlinkWrapperState extends State<BlinkWrapper> {
 // Word tile (StatelessWidget — no per-word state/controllers)
 // ─────────────────────────────────────────────────────────────────────────────
 class WordTile extends StatelessWidget {
-  final WordModel  word;
-  final double     fontSize;
-  final bool       isCriticalText;
-  final dynamic    db;
-  final bool       isPunct;
-  final bool       noTrailingSpace;
+  final WordModel word;
+  final double fontSize;
+  final bool isCriticalText;
+  final dynamic db;
+  final bool isPunct;
+  final bool noTrailingSpace;
   final Future<void> Function(int, int, int, {String? strongs}) onBibleLink;
-  final WordMarkup?  markup;
-  final bool         hasWordComment;
-  final String       themeMode;
+  final WordMarkup? backgroundMarkup;
+  final WordMarkup? underlineMarkup;
+  final bool hasWordComment;
+  final String themeMode;
   final VoidCallback? onWordCommentChanged;
-  final String       fontFamily;
+  final String fontFamily;
   final CustomThemeColors customColors;
-  final double       popupFontSize;
-  final double       lineHeight;
+  final double popupFontSize;
+  final double lineHeight;
+  final bool interactionEnabled;
 
   const WordTile({
     super.key,
@@ -380,10 +393,12 @@ class WordTile extends StatelessWidget {
     required this.customColors,
     required this.popupFontSize,
     this.lineHeight = 1.55,
-    this.markup,
+    this.backgroundMarkup,
+    this.underlineMarkup,
     this.hasWordComment = false,
     this.themeMode = 'light',
     this.onWordCommentChanged,
+    this.interactionEnabled = true,
   });
 
   void _showPopup(BuildContext ctx) {
@@ -405,8 +420,8 @@ class WordTile extends StatelessWidget {
     // ── Critical text label: stacked display ────────────────────────────────
     if (isCriticalText && wt.startsWith('n>')) {
       final label = wt.substring(2);
-      final critDimColor = Theme.of(context)
-          .colorScheme.onSurface.withValues(alpha: 0.35);
+      final critDimColor =
+          Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.35);
 
       if (label.contains('/')) {
         final parts = label.split('/');
@@ -437,16 +452,33 @@ class WordTile extends StatelessWidget {
       }
     }
 
-    // ── Braces: normal size, dimmed ─────────────────────────────────────────
+    // ── Braces: same size as critical text, dimmed ─────────────────────────
     if (isCriticalText && (wt == '{' || wt == '}')) {
-      final critDimColor = Theme.of(context)
-          .colorScheme.onSurface.withValues(alpha: 0.35);
+      final critDimColor =
+          Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.35);
       return Text(wt,
           style: TextStyle(
             fontFamily: fontFamily,
             fontSize: fontSize,
+            fontStyle: FontStyle.italic,
             color: critDimColor,
           ));
+    }
+
+    // ── Pipe separator in critical apparatus ─────────────────────────────
+    if (isCriticalText && wt == '|') {
+      final critDimColor =
+          Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.35);
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Text('|',
+            style: TextStyle(
+              fontFamily: fontFamily,
+              fontSize: fontSize,
+              fontStyle: FontStyle.italic,
+              color: critDimColor,
+            )),
+      );
     }
 
     // /n> and variant: — skip display entirely
@@ -459,23 +491,24 @@ class WordTile extends StatelessWidget {
         : (noTrailingSpace ? word.word : '${word.word} ');
 
     final isCrit = isCriticalText;
-    final critColor = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.35);
+    final critColor =
+        Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.35);
 
-    // ── Underline markup info ────────────────────────────────────────────────
-    final bool hasUnderline = markup != null && markup!.kind != MarkupKind.background;
+    // ── Underline markup info (from separate underlineMarkup) ────────────────
+    final bool hasUnderline = underlineMarkup != null;
     Color? ulColor;
     if (hasUnderline) {
-      ulColor = markup!.colorValue != null
-          ? Color(markup!.colorValue!)
-          : underlineColorsForTheme(themeMode)[
-              markup!.colorIndex.clamp(0, underlineColorsForTheme(themeMode).length - 1)];
+      ulColor = underlineMarkup!.colorValue != null
+          ? Color(underlineMarkup!.colorValue!)
+          : underlineColorsForTheme(themeMode)[underlineMarkup!.colorIndex
+              .clamp(0, underlineColorsForTheme(themeMode).length - 1)];
     }
 
     // ── Word background: user highlight > comment bg ────────────────────────
     Color? wordBg;
     if (!isCrit) {
-      if (markup != null && markup!.kind == MarkupKind.background && markup!.colorValue != null) {
-        wordBg = Color(markup!.colorValue!);
+      if (backgroundMarkup != null && backgroundMarkup!.colorValue != null) {
+        wordBg = Color(backgroundMarkup!.colorValue!);
       } else if (hasWordComment) {
         wordBg = customColors.wordCommentBg;
       }
@@ -483,18 +516,18 @@ class WordTile extends StatelessWidget {
 
     Widget textWidget = Text(displayText,
         style: TextStyle(
-            fontFamily: fontFamily,
-            fontSize: fontSize,
-            height: lineHeight,
-            fontStyle: isCrit ? FontStyle.italic : null,
-            color: isCrit ? critColor : null,
-            backgroundColor: wordBg,
+          fontFamily: fontFamily,
+          fontSize: fontSize,
+          height: lineHeight,
+          fontStyle: isCrit ? FontStyle.italic : null,
+          color: isCrit ? critColor : null,
+          backgroundColor: wordBg,
         ));
 
     // Wrap with custom underline (painted below text with offset)
     if (hasUnderline) {
       textWidget = WordUnderline(
-        kind: markup!.kind,
+        kind: underlineMarkup!.kind,
         color: ulColor!,
         child: textWidget,
       );
@@ -526,16 +559,15 @@ class WordTile extends StatelessWidget {
     // Critical text tags are not tappable
     final isCritTag = isCriticalTag(word.word.trim());
 
-    return RepaintBoundary(
-      child: GestureDetector(
-        onTap: isCritTag ? null : () => _showPopup(context),
-        child: isPunct
-            ? Padding(
-                padding: const EdgeInsets.only(left: 1),
-                child: Transform.translate(offset: const Offset(0, 1), child: wordWidget),
-              )
-            : wordWidget,
-      ),
+    return GestureDetector(
+      onTap: !interactionEnabled || isCritTag ? null : () => _showPopup(context),
+      child: isPunct
+          ? Padding(
+              padding: const EdgeInsets.only(left: 1),
+              child: Transform.translate(
+                  offset: const Offset(0, 1), child: wordWidget),
+            )
+          : wordWidget,
     );
   }
 }

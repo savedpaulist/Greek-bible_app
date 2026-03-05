@@ -54,8 +54,7 @@ class _SetupScreen extends StatefulWidget {
   State<_SetupScreen> createState() => _SetupScreenState();
 }
 
-class _SetupScreenState extends State<_SetupScreen>
-    with TickerProviderStateMixin {
+class _SetupScreenState extends State<_SetupScreen> {
   _Phase _phase = _Phase.storage;
   String _statusText = 'Подготовка…';
   double _progress = 0.0;
@@ -65,36 +64,9 @@ class _SetupScreenState extends State<_SetupScreen>
 
   List<StorageOption>? _storageOptions;
 
-  late final AnimationController _pulseCtrl;
-  late final AnimationController _progressCtrl;
-  late final AnimationController _fadeCtrl;
-  late final Animation<double> _pulseAnim;
-  late final Animation<double> _fadeAnim;
-
   @override
   void initState() {
     super.initState();
-
-    _pulseCtrl = AnimationController(
-      duration: const Duration(seconds: 2),
-      vsync: this,
-    )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.85, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
-    );
-
-    _progressCtrl = AnimationController(
-      duration: const Duration(milliseconds: 400),
-      vsync: this,
-    );
-
-    _fadeCtrl = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-    _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeIn);
-    _fadeCtrl.forward(); // fade in the screen
-
     _init();
   }
 
@@ -133,8 +105,8 @@ class _SetupScreenState extends State<_SetupScreen>
       _progress = 0;
     });
 
-    final targetDir = widget.prefs.dbStoragePath ??
-        await AssetExtractor.defaultDbDir();
+    final targetDir =
+        widget.prefs.dbStoragePath ?? await AssetExtractor.defaultDbDir();
 
     try {
       await AssetExtractor.extractAll(
@@ -171,7 +143,8 @@ class _SetupScreenState extends State<_SetupScreen>
     try {
       // Open databases temporarily for indexing
       final db = DBService();
-      await db.init(basePath: targetDir);
+      await db.initBible(basePath: targetDir);
+      await db.initDictionaries();
 
       await db.buildIndex(onProgress: (p) {
         if (!mounted) return;
@@ -202,17 +175,12 @@ class _SetupScreenState extends State<_SetupScreen>
       _progress = 1.0;
     });
 
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (!mounted) return;
-      widget.onComplete();
-    });
+    // No delay — proceed immediately.
+    widget.onComplete();
   }
 
   @override
   void dispose() {
-    _pulseCtrl.dispose();
-    _progressCtrl.dispose();
-    _fadeCtrl.dispose();
     super.dispose();
   }
 
@@ -222,28 +190,19 @@ class _SetupScreenState extends State<_SetupScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: FadeTransition(
-          opacity: _fadeAnim,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Spacer(flex: 2),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Spacer(flex: 2),
 
-                // ── Animated icon ──
-                AnimatedBuilder(
-                  animation: _pulseAnim,
-                  builder: (_, child) => Transform.scale(
-                    scale: _pulseAnim.value,
-                    child: child,
-                  ),
-                  child: const Icon(
-                    Icons.auto_stories_rounded,
-                    size: 80,
-                    color: Color(0xFF8EC07C),
-                  ),
-                ),
+              // ── Icon (no animation) ──
+              const Icon(
+                Icons.auto_stories_rounded,
+                size: 80,
+                color: Color(0xFF8EC07C),
+              ),
                 const SizedBox(height: 16),
                 const Text(
                   'Греческая Библия',
@@ -277,9 +236,8 @@ class _SetupScreenState extends State<_SetupScreen>
                 else if (_phase == _Phase.done)
                   _buildDone(),
 
-                const Spacer(flex: 2),
-              ],
-            ),
+              const Spacer(flex: 2),
+            ],
           ),
         ),
       ),
@@ -314,9 +272,8 @@ class _SetupScreenState extends State<_SetupScreen>
                 child: SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    icon: Icon(opt.isExternal
-                        ? Icons.sd_card
-                        : Icons.phone_android),
+                    icon: Icon(
+                        opt.isExternal ? Icons.sd_card : Icons.phone_android),
                     label: Text(opt.label),
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
@@ -389,7 +346,6 @@ class _SetupScreenState extends State<_SetupScreen>
           current: 1,
         ),
         const SizedBox(height: 28),
-
         const Icon(
           Icons.manage_search_rounded,
           size: 36,
@@ -409,9 +365,7 @@ class _SetupScreenState extends State<_SetupScreen>
           ),
         ),
         const SizedBox(height: 20),
-
         _AnimatedProgressBar(progress: _progress),
-
         const SizedBox(height: 8),
         Text(
           '${(_progress * 100).toInt()}%',
@@ -430,26 +384,17 @@ class _SetupScreenState extends State<_SetupScreen>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0.0, end: 1.0),
-          duration: const Duration(milliseconds: 500),
-          curve: Curves.elasticOut,
-          builder: (_, value, child) => Transform.scale(
-            scale: value,
-            child: child,
+        Container(
+          width: 64,
+          height: 64,
+          decoration: const BoxDecoration(
+            color: Color(0xFF8EC07C),
+            shape: BoxShape.circle,
           ),
-          child: Container(
-            width: 64,
-            height: 64,
-            decoration: const BoxDecoration(
-              color: Color(0xFF8EC07C),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.check_rounded,
-              size: 36,
-              color: Color(0xFF1D2021),
-            ),
+          child: const Icon(
+            Icons.check_rounded,
+            size: 36,
+            color: Color(0xFF1D2021),
           ),
         ),
         const SizedBox(height: 16),
@@ -530,8 +475,8 @@ class _StepRow extends StatelessWidget {
                 ),
                 child: Center(
                   child: i < current
-                      ? const Icon(Icons.check, size: 16,
-                            color: Color(0xFF1D2021))
+                      ? const Icon(Icons.check,
+                          size: 16, color: Color(0xFF1D2021))
                       : Text(
                           '${i + 1}',
                           style: TextStyle(
@@ -575,16 +520,11 @@ class _AnimatedProgressBar extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: SizedBox(
-        height: 10,
-        child: TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0, end: progress),
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeOut,
-          builder: (_, value, __) => LinearProgressIndicator(
-            value: value,
-            backgroundColor: const Color(0xFF3C3836),
-            valueColor: const AlwaysStoppedAnimation(Color(0xFF8EC07C)),
-          ),
+        height: 30,
+        child: LinearProgressIndicator(
+          value: progress,
+          backgroundColor: const Color(0xFF3C3836),
+          valueColor: const AlwaysStoppedAnimation(Color(0xFF8EC07C)),
         ),
       ),
     );

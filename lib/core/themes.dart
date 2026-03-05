@@ -464,6 +464,26 @@ ThemeData buildDarkTheme(String font, [CustomThemeColors? colors]) =>
 ThemeData buildEinkTheme(String font, [CustomThemeColors? colors]) =>
     buildThemeFromColors(colors ?? defaultEinkColors, font, 'eink');
 
+/// Single entry point for theme building.
+ThemeData buildTheme(
+  String mode,
+  CustomThemeColors colors,
+  String font, {
+  bool disableAnimations = false,
+}) {
+  switch (mode) {
+    case 'dark':
+      return buildThemeFromColors(colors, font, 'dark',
+          disableAnimations: disableAnimations);
+    case 'eink':
+      return buildThemeFromColors(colors, font, 'eink',
+          disableAnimations: disableAnimations);
+    default:
+      return buildThemeFromColors(colors, font, 'light',
+          disableAnimations: disableAnimations);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Bible segment colors (for book picker grid)
 // ─────────────────────────────────────────────────────────────────────────────

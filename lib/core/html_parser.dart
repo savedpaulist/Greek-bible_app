@@ -38,6 +38,10 @@ Widget buildHtmlWidget({
   bool shrinkWrap = true,
 }) {
   var source = html;
+  // Replace <hr> / <hr/> with a simple line break to avoid huge spacing
+  source = source.replaceAll(RegExp(r'<hr\s*/?>'), '<br/>');
+  // Collapse multiple consecutive <br> tags into one
+  source = source.replaceAll(RegExp(r'(<br\s*/?>){2,}'), '<br/>');
   if (maxLength > 0 && source.length > maxLength) {
     source = truncateHtmlForPreview(source, maxLength);
   }

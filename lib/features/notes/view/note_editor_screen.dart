@@ -1,6 +1,7 @@
 // lib/features/notes/view/note_editor_screen.dart
 
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
@@ -14,6 +15,10 @@ import '../../../word_popup.dart';
 import '../../home/view/book_chapter_dialog.dart';
 import '../data/note_model.dart';
 import '../provider/notes_provider.dart';
+import '../widgets/auto_list_text_field.dart';
+import '../widgets/format_toolbar.dart';
+import '../widgets/markdown_highlight_controller.dart';
+import '../widgets/note_font_settings_sheet.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-tab state container
@@ -21,12 +26,12 @@ import '../provider/notes_provider.dart';
 class _TabData {
   NoteModel note;
   final TextEditingController titleCtrl;
-  final _LinkHighlightController contentCtrl;
+  final MarkdownHighlightController contentCtrl;
   bool preview;
 
   _TabData({required this.note, required String title, required String content})
       : titleCtrl = TextEditingController(text: title),
-        contentCtrl = _LinkHighlightController(text: content),
+        contentCtrl = MarkdownHighlightController(text: content),
         preview = content.trim().isNotEmpty;
 
   void dispose() {
@@ -48,6 +53,7 @@ class NoteEditorScreen extends StatefulWidget {
 }
 
 class _NoteEditorScreenState extends State<NoteEditorScreen> {
+  bool _contentVisible = false;
   // ── Tab management ──────────────────────────────────────────────────────
   final List<_TabData> _tabs = [];
   int _activeTabIdx = 0;
@@ -56,7 +62,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
 
   // Convenience accessors (delegate to current tab)
   TextEditingController get _titleCtrl => _currentTab.titleCtrl;
-  _LinkHighlightController get _contentCtrl => _currentTab.contentCtrl;
+  MarkdownHighlightController get _contentCtrl => _currentTab.contentCtrl;
   bool get _preview => _currentTab.preview;
   set _preview(bool v) => _currentTab.preview = v;
 
@@ -73,6 +79,9 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     _activeTabIdx = 0;
     // Listen to current tab's controllers
     _attachListeners();
+    Future.delayed(const Duration(milliseconds: 120), () {
+      if (mounted) setState(() => _contentVisible = true);
+    });
   }
 
   /// Create a _TabData from a NoteModel and add it to the tabs list.
@@ -505,27 +514,69 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
-      builder: (ctx) => _NoteFontSettingsSheet(appState: appState),
+      builder: (ctx) => NoteFontSettingsSheet(appState: appState),
     );
   }
 
-  // ── Enter edit mode (task 9/10: cursor placement) ─────────────────────────
+  // ── Enter edit mode (cursor placement by tap position) ──────────────────
 
-  void _enterEditMode() {
+  void _enterEditMode({Offset? tapPosition}) {
     setState(() => _preview = false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final text = _contentCtrl.text;
-      if (text.isNotEmpty) {
-        _contentCtrl.selection = TextSelection.collapsed(offset: text.length);
+      if (tapPosition != null) {
+        final offset = _estimateCursorOffset(tapPosition);
+        _contentCtrl.selection = TextSelection.collapsed(offset: offset);
+      } else {
+        final text = _contentCtrl.text;
+        if (text.isNotEmpty) {
+          _contentCtrl.selection = TextSelection.collapsed(offset: text.length);
+        }
       }
       _contentFocus.requestFocus();
     });
+  }
+
+  /// Estimate the text offset from a tap position in the preview area.
+  /// Uses line height and font size to approximate which line & character
+  /// was tapped, then maps back to the raw markdown text offset.
+  int _estimateCursorOffset(Offset localPosition) {
+    final appState = context.read<AppState>();
+    final fontSize = appState.noteFontSize;
+    final lineHeight = appState.noteLineHeight;
+    final lineH = fontSize * lineHeight;
+    final text = _contentCtrl.text;
+    if (text.isEmpty) return 0;
+
+    // Account for padding (16 top in preview)
+    final y = (localPosition.dy - 16).clamp(0.0, double.infinity);
+    // Account for title header + date header (~2 extra lines)
+    final headerLines = _titleCtrl.text.isNotEmpty ? 3 : 1;
+    final tappedLine = ((y / lineH) - headerLines).clamp(0.0, double.infinity).floor();
+
+    final lines = text.split('\n');
+    // Find which line in the raw text
+    int charOffset = 0;
+    for (int i = 0; i < lines.length && i < tappedLine; i++) {
+      charOffset += lines[i].length + 1; // +1 for '\n'
+    }
+
+    // Estimate horizontal position within the line
+    final x = (localPosition.dx - 16).clamp(0.0, double.infinity);
+    final charWidth = fontSize * 0.55; // approximate monospace-like width
+    final charInLine = (x / charWidth).floor();
+
+    if (tappedLine < lines.length) {
+      charOffset += charInLine.clamp(0, lines[tappedLine].length);
+    }
+
+    return charOffset.clamp(0, text.length);
   }
 
   @override
   void dispose() {
     _saveTimer?.cancel();
     _detachListeners();
+    _contentFocus.unfocus();
     // Save and dispose all tabs
     for (final tab in _tabs) {
       final updated = tab.note.copyWith(
@@ -550,6 +601,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     _saveTab(_currentTab); // save current
     _activeLinkTarget = null;
     _contentFocus.unfocus();
+    FocusScope.of(context).unfocus();
     setState(() {
       _activeTabIdx = index;
     });
@@ -559,6 +611,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   void _closeTab(int index) {
     if (_tabs.length <= 1) {
       // Last tab — go back
+      FocusScope.of(context).unfocus();
+      _contentFocus.unfocus();
       Navigator.of(context).pop();
       return;
     }
@@ -586,6 +640,8 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     }
     _detachListeners();
     _saveTab(_currentTab);
+    _contentFocus.unfocus();
+    FocusScope.of(context).unfocus();
     _addTab(note);
     _activeTabIdx = _tabs.length - 1;
     _attachListeners();
@@ -704,64 +760,81 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
         }
         Navigator.of(context).pop();
       },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(_preview ? 'Предпросмотр' : 'Редактор'),
-          actions: [
-            if (!_preview) ...[
-              IconButton(
-                icon: const Icon(Icons.menu_book, size: 20),
-                tooltip: 'Вставить ссылку на стих',
-                onPressed: _insertBibleRef,
-              ),
-              IconButton(
-                icon: const Icon(Icons.link, size: 20),
-                tooltip: 'Ссылка на заметку',
-                onPressed: _insertNoteLink,
+      child: Stack(
+        children: [
+          // ── Основной контент с отступом под AppBar ──
+          Column(
+            children: [
+              SizedBox(height: MediaQuery.of(context).padding.top + 56),
+              _buildTabBar(cs),
+              Expanded(
+                child: _preview ? _buildPreview(cs, appState) : _buildEditor(cs, appState),
               ),
             ],
-            // Font settings in top bar
-            IconButton(
-              icon: const Icon(Icons.text_format, size: 22),
-              tooltip: 'Настройки шрифта',
-              onPressed: _showNoteFontSettings,
-            ),
-            // Export .md
-            IconButton(
-              icon: const Icon(Icons.share, size: 20),
-              tooltip: 'Экспорт .md',
-              onPressed: _exportMarkdown,
-            ),
-            // Edit / Preview toggle
-            IconButton(
-              icon: Icon(
-                _preview ? Icons.edit_note : Icons.check,
-                size: 22,
+          ),
+          // ── Размытая плавающая панель сверху ──────────
+          Positioned(
+            top: 0, left: 0, right: 0,
+            child: ClipRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  height: MediaQuery.of(context).padding.top + 56,
+                  color: Theme.of(context).canvasColor.withValues(alpha: 0.85),
+                  child: SafeArea(
+                    bottom: false,
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                        const Spacer(),
+                        if (!_preview) ...[
+                          IconButton(
+                            icon: const Icon(Icons.menu_book, size: 20),
+                            tooltip: 'Вставить ссылку на стих',
+                            onPressed: _insertBibleRef,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.link, size: 20),
+                            tooltip: 'Ссылка на заметку',
+                            onPressed: _insertNoteLink,
+                          ),
+                        ],
+                        IconButton(
+                          icon: const Icon(Icons.text_format, size: 22),
+                          tooltip: 'Настройки шрифта',
+                          onPressed: _showNoteFontSettings,
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.share, size: 20),
+                          tooltip: 'Экспорт .md',
+                          onPressed: _exportMarkdown,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            _preview ? Icons.edit_note : Icons.check,
+                            size: 22,
+                          ),
+                          tooltip: _preview ? 'Редактировать' : 'Готово',
+                          onPressed: () {
+                            if (_preview) {
+                              _enterEditMode();
+                              return;
+                            }
+                            FocusScope.of(context).unfocus();
+                            setState(() => _preview = true);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-              tooltip: _preview ? 'Редактировать' : 'Готово',
-              onPressed: () {
-                if (_preview) {
-                  _enterEditMode();
-                  return;
-                }
-                FocusScope.of(context).unfocus();
-                setState(() => _preview = true);
-              },
             ),
-          ],
-        ),
-        body: Column(
-          children: [
-            // ── Tab bar ───────────────────────────────
-            _buildTabBar(cs),
-            // ── Editor / Preview ──────────────────────
-            Expanded(
-              child: _preview
-                  ? _buildPreview(cs, appState)
-                  : _buildEditor(cs, appState),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -852,85 +925,96 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     final noteFontSize = appState.noteFontSize;
     final noteLineH = appState.noteLineHeight;
 
-    return Column(
-      children: [
-        // Link action bar
-        if (_activeLinkTarget != null) _buildLinkBar(cs),
-        // Markdown formatting toolbar
-        _MarkdownToolbar(
-          cs: cs,
-          onBold: () => _wrapSelection('**', '**'),
-          onItalic: () => _wrapSelection('*', '*'),
-          onStrikethrough: () => _wrapSelection('~~', '~~'),
-          onCode: () => _wrapSelection('`', '`'),
-          onH1: () => _prefixLine('# '),
-          onH2: () => _prefixLine('## '),
-          onH3: () => _prefixLine('### '),
-          onBulletList: () => _prefixLine('- '),
-          onNumberedList: () => _prefixLine('1. '),
-          onCheckbox: () => _prefixLine('- [ ] '),
-          onBlockquote: () => _prefixLine('> '),
-          onHorizontalRule: () => _insertTextAtCursor('\n---\n'),
-          onBibleRef: _insertBibleRef,
-          onBibleQuote: _insertBibleQuote,
-          onNoteLink: _insertNoteLink,
-        ),
-        const Divider(height: 1),
-        // Title field (task 1: gray hint when empty)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: TextField(
-            controller: _titleCtrl,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              fontFamily: noteFontDisplay,
-              color: cs.onSurface,
-            ),
-            decoration: InputDecoration(
-              hintText: 'Название заметки',
-              hintStyle: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: cs.onSurface.withValues(alpha: 0.35),
-              ),
-              border: InputBorder.none,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            ),
-            maxLines: 1,
-          ),
-        ),
-        Divider(height: 1, color: cs.outlineVariant),
-        // Content field with auto-list support
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: _AutoListTextField(
-              controller: _contentCtrl,
-              focusNode: _contentFocus,
-              scrollController: _scrollController,
-              onNewLine: _handleNewLine,
-              typewriterMode: appState.typewriterMode,
-              style: TextStyle(
-                fontSize: noteFontSize,
-                fontFamily: noteFontDisplay,
-                height: noteLineH,
-                color: cs.onSurface,
-              ),
-              decoration: InputDecoration(
-                hintText: 'Содержание (Markdown)…',
-                hintStyle: TextStyle(
-                  color: cs.onSurface.withValues(alpha: 0.35),
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () {
+        FocusScope.of(context).unfocus();
+      },
+      child: AnimatedOpacity(
+        opacity: _contentVisible ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeIn,
+        child: Column(
+          children: [
+            if (_activeLinkTarget != null) _buildLinkBar(cs),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: TextField(
+                controller: _titleCtrl,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: noteFontDisplay,
+                  color: cs.onSurface,
                 ),
-                border: InputBorder.none,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                decoration: InputDecoration.collapsed(
+                  hintText: 'Название заметки',
+                  hintStyle: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: cs.onSurface.withValues(alpha: 0.35),
+                  ),
+                ),
+                maxLines: 1,
               ),
             ),
-          ),
+            AnimatedOpacity(
+              opacity: _contentVisible ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 500),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2, bottom: 2),
+                child: Text(
+                  'Изменено: ' + _currentTab.note.updatedAt.toString(),
+                  style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.5)),
+                ),
+              ),
+            ),
+            Divider(height: 1, color: cs.outlineVariant),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: AutoListTextField(
+                  controller: _contentCtrl,
+                  focusNode: _contentFocus,
+                  scrollController: _scrollController,
+                  onNewLine: _handleNewLine,
+                  typewriterMode: true,
+                  style: TextStyle(
+                    fontSize: noteFontSize,
+                    fontFamily: noteFontDisplay,
+                    height: noteLineH,
+                    color: cs.onSurface,
+                  ),
+                  decoration: InputDecoration.collapsed(
+                    hintText: 'Содержание (Markdown)…',
+                    hintStyle: TextStyle(
+                      color: cs.onSurface.withValues(alpha: 0.35),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            MarkdownToolbar(
+              cs: cs,
+              onBold: () => _wrapSelection('**', '**'),
+              onItalic: () => _wrapSelection('*', '*'),
+              onStrikethrough: () => _wrapSelection('~~', '~~'),
+              onCode: () => _wrapSelection('`', '`'),
+              onH1: () => _prefixLine('# '),
+              onH2: () => _prefixLine('## '),
+              onH3: () => _prefixLine('### '),
+              onBulletList: () => _prefixLine('- '),
+              onNumberedList: () => _prefixLine('1. '),
+              onCheckbox: () => _prefixLine('- [ ] '),
+              onBlockquote: () => _prefixLine('> '),
+              onHorizontalRule: () => _insertTextAtCursor('\n---\n'),
+              onBibleRef: _insertBibleRef,
+              onBibleQuote: _insertBibleQuote,
+              onNoteLink: _insertNoteLink,
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 
@@ -1033,9 +1117,9 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
     final nlh = appState.noteLineHeight;
 
     return GestureDetector(
-      // Task 6: tap in preview → switch to edit mode
-      onTap: _enterEditMode,
-      behavior: HitTestBehavior.translucent,
+      // Tap anywhere in preview → switch to edit mode at tap position
+      onTapUp: (details) => _enterEditMode(tapPosition: details.localPosition),
+      behavior: HitTestBehavior.opaque,
       child: FutureBuilder<String>(
         future: _resolveVerseQuotes(_contentCtrl.text),
         builder: (context, snapshot) {
@@ -1070,7 +1154,7 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
 
           return Markdown(
             data: dateHeader + displayContent,
-            selectable: true,
+            selectable: false,
             softLineBreak: true,
             padding: const EdgeInsets.all(16),
             styleSheet: MarkdownStyleSheet(
@@ -1178,394 +1262,9 @@ class _NoteEditorScreenState extends State<NoteEditorScreen> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Markdown formatting toolbar
-// ─────────────────────────────────────────────────────────────────────────────
 
-class _MarkdownToolbar extends StatelessWidget {
-  final ColorScheme cs;
-  final VoidCallback onBold;
-  final VoidCallback onItalic;
-  final VoidCallback onStrikethrough;
-  final VoidCallback onCode;
-  final VoidCallback onH1;
-  final VoidCallback onH2;
-  final VoidCallback onH3;
-  final VoidCallback onBulletList;
-  final VoidCallback onNumberedList;
-  final VoidCallback onCheckbox;
-  final VoidCallback onBlockquote;
-  final VoidCallback onHorizontalRule;
-  final VoidCallback onBibleRef;
-  final VoidCallback onBibleQuote;
-  final VoidCallback onNoteLink;
-
-  const _MarkdownToolbar({
-    required this.cs,
-    required this.onBold,
-    required this.onItalic,
-    required this.onStrikethrough,
-    required this.onCode,
-    required this.onH1,
-    required this.onH2,
-    required this.onH3,
-    required this.onBulletList,
-    required this.onNumberedList,
-    required this.onCheckbox,
-    required this.onBlockquote,
-    required this.onHorizontalRule,
-    required this.onBibleRef,
-    required this.onBibleQuote,
-    required this.onNoteLink,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      elevation: 1,
-      color: cs.surfaceContainerHighest.withValues(alpha: 0.5),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Row(
-          children: [
-            _btn(Icons.format_bold, 'Жирный', onBold),
-            _btn(Icons.format_italic, 'Курсив', onItalic),
-            _btn(Icons.strikethrough_s, 'Зачёркнутый', onStrikethrough),
-            _btn(Icons.code, 'Код', onCode),
-            _divider(),
-            _headerBtn('H1', onH1),
-            _headerBtn('H2', onH2),
-            _headerBtn('H3', onH3),
-            _divider(),
-            _btn(Icons.format_list_bulleted, 'Маркированный', onBulletList),
-            _btn(Icons.format_list_numbered, 'Нумерованный', onNumberedList),
-            _btn(Icons.check_box_outlined, 'Чекбокс', onCheckbox),
-            _btn(Icons.format_quote, 'Цитата', onBlockquote),
-            _btn(Icons.horizontal_rule, 'Линия', onHorizontalRule),
-            _divider(),
-            _btn(Icons.menu_book, 'Ссылка на стих', onBibleRef),
-            _btn(Icons.format_quote_rounded, 'Цитата стиха', onBibleQuote),
-            _btn(Icons.link, 'Ссылка на заметку', onNoteLink),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _btn(IconData icon, String tooltip, VoidCallback onTap) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Icon(icon, size: 20,
-              color: cs.onSurface.withValues(alpha: 0.8)),
-        ),
-      ),
-    );
-  }
-
-  Widget _headerBtn(String label, VoidCallback onTap) {
-    return Tooltip(
-      message: 'Заголовок $label',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: cs.onSurface.withValues(alpha: 0.8),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _divider() {
-    return Container(
-      width: 1,
-      height: 20,
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      color: cs.outlineVariant,
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TextEditingController that highlights [[...]] links
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _LinkHighlightController extends TextEditingController {
-  _LinkHighlightController({super.text});
-
-  static final _linkPattern = RegExp(r'\[\[([^\]]+)\]\]|\{\{([^}]+)\}\}');
-
-  @override
-  TextSpan buildTextSpan({
-    required BuildContext context,
-    TextStyle? style,
-    required bool withComposing,
-  }) {
-    final t = text;
-    if (t.isEmpty) return TextSpan(style: style, text: t);
-
-    final linkColor = Theme.of(context).colorScheme.primary;
-    final quoteColor = Theme.of(context).colorScheme.tertiary;
-    final children = <InlineSpan>[];
-    int lastEnd = 0;
-
-    for (final match in _linkPattern.allMatches(t)) {
-      if (match.start > lastEnd) {
-        children
-            .add(TextSpan(text: t.substring(lastEnd, match.start), style: style));
-      }
-      final isQuote = match.group(0)!.startsWith('{{');
-      final color = isQuote ? quoteColor : linkColor;
-      children.add(TextSpan(
-        text: match.group(0),
-        style: style?.copyWith(
-          color: color,
-          decoration: TextDecoration.underline,
-          decorationColor: color.withValues(alpha: 0.5),
-        ),
-      ));
-      lastEnd = match.end;
-    }
-
-    if (lastEnd < t.length) {
-      children.add(TextSpan(text: t.substring(lastEnd), style: style));
-    }
-
-    if (children.isEmpty) return TextSpan(style: style, text: t);
-    return TextSpan(children: children, style: style);
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auto-list text field with optional typewriter scroll
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _AutoListTextField extends StatefulWidget {
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final ScrollController scrollController;
-  final VoidCallback onNewLine;
-  final bool typewriterMode;
-  final TextStyle style;
-  final InputDecoration decoration;
-
-  const _AutoListTextField({
-    required this.controller,
-    required this.focusNode,
-    required this.scrollController,
-    required this.onNewLine,
-    required this.typewriterMode,
-    required this.style,
-    required this.decoration,
-  });
-
-  @override
-  State<_AutoListTextField> createState() => _AutoListTextFieldState();
-}
-
-class _AutoListTextFieldState extends State<_AutoListTextField> {
-  int _prevLength = 0;
-  int _prevNewlines = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _prevLength = widget.controller.text.length;
-    _prevNewlines = '\n'.allMatches(widget.controller.text).length;
-    widget.controller.addListener(_onTextChanged);
-  }
-
-  void _onTextChanged() {
-    final text = widget.controller.text;
-    final newlines = '\n'.allMatches(text).length;
-
-    // Detect newline insertion (not deletion)
-    if (text.length > _prevLength && newlines > _prevNewlines) {
-      // Defer to after the text is committed
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        widget.onNewLine();
-        // Typewriter: keep cursor in center of visible area
-        if (widget.typewriterMode) {
-          _scrollToCursorCenter();
-        }
-      });
-    }
-
-    _prevLength = text.length;
-    _prevNewlines = newlines;
-  }
-
-  void _scrollToCursorCenter() {
-    final sc = widget.scrollController;
-    if (!sc.hasClients) return;
-    // Estimate cursor position from line count up to cursor
-    final sel = widget.controller.selection;
-    if (!sel.isValid) return;
-    final textBeforeCursor = widget.controller.text.substring(0, sel.baseOffset);
-    final lineCount = '\n'.allMatches(textBeforeCursor).length;
-    final lineHeightEstimate = widget.style.fontSize! * (widget.style.height ?? 1.5);
-    final cursorY = lineCount * lineHeightEstimate;
-    final viewportHeight = sc.position.viewportDimension;
-    final targetOffset = (cursorY - viewportHeight / 2).clamp(0.0, sc.position.maxScrollExtent);
-    sc.animateTo(targetOffset, duration: const Duration(milliseconds: 150), curve: Curves.easeOut);
-  }
-
-  @override
-  void dispose() {
-    widget.controller.removeListener(_onTextChanged);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      controller: widget.controller,
-      focusNode: widget.focusNode,
-      scrollController: widget.scrollController,
-      maxLines: null,
-      expands: true,
-      textAlignVertical: TextAlignVertical.top,
-      style: widget.style,
-      decoration: widget.decoration,
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Note font settings bottom sheet
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _NoteFontSettingsSheet extends StatefulWidget {
-  final AppState appState;
-  const _NoteFontSettingsSheet({required this.appState});
-
-  @override
-  State<_NoteFontSettingsSheet> createState() => _NoteFontSettingsSheetState();
-}
-
-class _NoteFontSettingsSheetState extends State<_NoteFontSettingsSheet> {
-  late double _fontSize;
-  late double _lineHeight;
-  late String _fontFamily;
-  late bool _typewriter;
-
-  @override
-  void initState() {
-    super.initState();
-    _fontSize = widget.appState.noteFontSize;
-    _lineHeight = widget.appState.noteLineHeight;
-    _fontFamily = widget.appState.noteFontFamily;
-    _typewriter = widget.appState.typewriterMode;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Шрифт заметок',
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: cs.onSurface)),
-            const SizedBox(height: 16),
-            // Font family
-            Text('Шрифт', style: TextStyle(fontSize: 13, color: cs.secondary)),
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: AppState.availableFonts.entries.map((e) {
-                final selected = _fontFamily == e.key;
-                return ChoiceChip(
-                  label: Text(e.value, style: TextStyle(fontFamily: e.value, fontSize: 13)),
-                  selected: selected,
-                  onSelected: (_) {
-                    setState(() => _fontFamily = e.key);
-                    widget.appState.setNoteFontFamily(e.key);
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
-            // Font size
-            Row(
-              children: [
-                SizedBox(
-                    width: 100,
-                    child: Text('Размер: ${_fontSize.round()}',
-                        style: TextStyle(fontSize: 13, color: cs.secondary))),
-                Expanded(
-                  child: Slider(
-                    value: _fontSize,
-                    min: 10,
-                    max: 32,
-                    divisions: 22,
-                    onChanged: (v) {
-                      setState(() => _fontSize = v);
-                      widget.appState.setNoteFontSize(v);
-                    },
-                  ),
-                ),
-              ],
-            ),
-            // Line height
-            Row(
-              children: [
-                SizedBox(
-                    width: 100,
-                    child: Text('Межстрочный: ${_lineHeight.toStringAsFixed(1)}',
-                        style: TextStyle(fontSize: 13, color: cs.secondary))),
-                Expanded(
-                  child: Slider(
-                    value: _lineHeight,
-                    min: 1.0,
-                    max: 2.5,
-                    divisions: 15,
-                    onChanged: (v) {
-                      setState(() => _lineHeight = v);
-                      widget.appState.setNoteLineHeight(v);
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // Typewriter mode toggle
-            SwitchListTile(
-              title: const Text('Режим печатной машинки',
-                  style: TextStyle(fontSize: 14)),
-              subtitle: Text('Активная строка по центру',
-                  style: TextStyle(fontSize: 12, color: cs.secondary)),
-              value: _typewriter,
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              onChanged: (v) {
-                setState(() => _typewriter = v);
-                widget.appState.setTypewriterMode(v);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+// Extracted classes are now in ../widgets/:
+//   MarkdownHighlightController → markdown_highlight_controller.dart
+//   AutoListTextField → auto_list_text_field.dart
+//   MarkdownToolbar → format_toolbar.dart
+//   NoteFontSettingsSheet → note_font_settings_sheet.dart

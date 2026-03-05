@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/app_state.dart';
 import '../../../core/db/db_service.dart';
+import '../../../core/utils/tab_drag_mixin.dart';
 import '../provider/dictionary_provider.dart';
 import '../widgets/dictionary_entry_tile.dart';
 import 'dictionary_article_screen.dart';
@@ -23,10 +24,11 @@ class DictionaryDetailScreen extends StatefulWidget {
 }
 
 class _DictionaryDetailScreenState extends State<DictionaryDetailScreen>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, TabDragMixin {
   final _searchCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   bool _searchActive = false;
+  bool _initialLoadDone = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -36,9 +38,12 @@ class _DictionaryDetailScreenState extends State<DictionaryDetailScreen>
     super.initState();
     _scrollCtrl.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<DictionaryProvider>().loadEntries(
-            dictionaryId: widget.dictionaryId,
-          );
+      if (!_initialLoadDone) {
+        _initialLoadDone = true;
+        context.read<DictionaryProvider>().loadEntries(
+              dictionaryId: widget.dictionaryId,
+            );
+      }
     });
   }
 
@@ -70,7 +75,6 @@ class _DictionaryDetailScreenState extends State<DictionaryDetailScreen>
   Widget build(BuildContext context) {
     super.build(context);
     final provider = context.watch<DictionaryProvider>();
-    final db = context.read<AppState>().db;
 
     return Scaffold(
       appBar: AppBar(
@@ -107,7 +111,6 @@ class _DictionaryDetailScreenState extends State<DictionaryDetailScreen>
               onPressed: () => setState(() => _searchActive = true),
             ),
         ],
-        // ── Галочка «в содержании» — показывается, пока открыт поиск ────────
         bottom: _searchActive
             ? PreferredSize(
                 preferredSize: const Size.fromHeight(36),
@@ -118,7 +121,11 @@ class _DictionaryDetailScreenState extends State<DictionaryDetailScreen>
               )
             : null,
       ),
-      body: _buildBody(provider, db),
+      body: wrapWithTabDrag(
+        context: context,
+        onSwipeRight: () => goToTab(context, 1),
+        child: _buildBody(provider, context.read<AppState>().db),
+      ),
     );
   }
 

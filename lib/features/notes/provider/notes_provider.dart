@@ -4,8 +4,46 @@ import 'package:flutter/foundation.dart';
 import '../data/notes_db.dart';
 import '../data/note_model.dart';
 import '../../../core/models/models.dart';
+import '../../../core/prefs/prefs_service.dart';
 
 class NotesProvider extends ChangeNotifier {
+    // A2: recentTagIds support
+    List<String> _recentTagIds = [];
+    List<String> get recentTagIds => List.unmodifiable(_recentTagIds);
+    PrefsService? _prefs;
+
+    void setPrefs(PrefsService prefs) {
+      _prefs = prefs;
+    }
+
+    /// Отметить тег как «только что использованный».
+    /// Перемещает tagId в начало списка, обрезает до 5.
+    Future<void> markTagUsed(String tagId) async {
+      _recentTagIds.removeWhere((id) => id == tagId);
+      _recentTagIds.insert(0, tagId);
+      if (_recentTagIds.length > 5) {
+        _recentTagIds = _recentTagIds.sublist(0, 5);
+      }
+      await _prefs?.setRecentTagIds(_recentTagIds);
+      notifyListeners();
+    }
+  // noteId -> List<NoteTag> (for fast sync access)
+  final Map<String, List<NoteTag>> _noteTagsCache = {};
+
+    /// Возвращает список тегов для заметки из кэша (синхронно).
+    /// Возвращает список тегов для заметки из кэша (синхронно).
+    List<NoteTag> tagsForNote(String noteId) {
+      return _noteTagsCache[noteId] ?? const [];
+    }
+
+    /// Пересчитать кэш noteId→tags (вызывать после загрузки и при изменениях)
+    Future<void> rebuildNoteTagsCache() async {
+      final map = await _db.getAllNoteTagsMap();
+      _noteTagsCache
+        ..clear()
+        ..addAll(map);
+      notifyListeners();
+    }
   final NotesDB _db;
   NotesProvider(this._db);
 
@@ -36,6 +74,8 @@ class NotesProvider extends ChangeNotifier {
     _templates = await _db.getTemplates();
     _folders = await _db.getAllFolders();
     _tags = await _db.getAllTags();
+    await rebuildNoteTagsCache();
+    _recentTagIds = _prefs?.recentTagIds ?? [];
     _loading = false;
     notifyListeners();
   }
@@ -43,7 +83,8 @@ class NotesProvider extends ChangeNotifier {
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   Future<NoteModel> createNote({String? templateId, String? folderId}) async {
-    final note = await _db.createNote(templateId: templateId, folderId: folderId);
+    final note =
+        await _db.createNote(templateId: templateId, folderId: folderId);
     _notes.insert(0, note);
     notifyListeners();
     return note;
@@ -76,8 +117,9 @@ class NotesProvider extends ChangeNotifier {
 
   /// Find an existing note by exact title (case-insensitive).
   NoteModel? findNoteByTitle(String title) {
-    return _notes.where(
-        (n) => n.title.toLowerCase() == title.toLowerCase()).firstOrNull;
+    return _notes
+        .where((n) => n.title.toLowerCase() == title.toLowerCase())
+        .firstOrNull;
   }
 
   Future<void> updateNote(NoteModel note) async {
@@ -109,6 +151,18 @@ class NotesProvider extends ChangeNotifier {
 
   // ── Links ─────────────────────────────────────────────────────────────────
 
+  /// Найти все заметки, которые ссылаются на [noteId] через [[noteTitle]].
+  List<NoteModel> getBacklinks(String noteId, String noteTitle) {
+    if (noteTitle.isEmpty) return [];
+    final titleLower = noteTitle.toLowerCase();
+    return _notes.where((n) {
+      if (n.id == noteId) return false;
+      final contentLower = n.content.toLowerCase();
+      return contentLower.contains('[[$titleLower]]') ||
+          n.content.contains('[[$noteTitle]]');
+    }).toList();
+  }
+
   Future<List<NoteModel>> getLinkedNotes(String noteId) async {
     return _db.getLinkedNotes(noteId);
   }
@@ -122,9 +176,10 @@ class NotesProvider extends ChangeNotifier {
       final title = m.group(1)?.trim() ?? '';
       if (title.isEmpty) continue;
       // Find note by title
-      final target = _notes.where(
-        (n) => n.id != note.id && n.title.toLowerCase() == title.toLowerCase()
-      ).firstOrNull;
+      final target = _notes
+          .where((n) =>
+              n.id != note.id && n.title.toLowerCase() == title.toLowerCase())
+          .firstOrNull;
       if (target != null) targetIds.add(target.id);
     }
     await _db.setNoteLinks(note.id, targetIds);
@@ -154,11 +209,9 @@ class NotesProvider extends ChangeNotifier {
           int bookNumber, int chapter, int verse, String text) =>
       _db.addVerseComment(bookNumber, chapter, verse, text);
 
-  Future<void> updateVerseComment(VerseComment c) =>
-      _db.updateVerseComment(c);
+  Future<void> updateVerseComment(VerseComment c) => _db.updateVerseComment(c);
 
-  Future<void> deleteVerseComment(String id) =>
-      _db.deleteVerseComment(id);
+  Future<void> deleteVerseComment(String id) => _db.deleteVerseComment(id);
 
   Future<Set<String>> getCommentedVerseKeys(int bookNumber, int chapter) =>
       _db.getCommentedVerseKeys(bookNumber, chapter);
@@ -186,8 +239,7 @@ class NotesProvider extends ChangeNotifier {
         targetVerse: targetVerse,
       );
 
-  Future<void> deleteParallelVerse(String id) =>
-      _db.deleteParallelVerse(id);
+  Future<void> deleteParallelVerse(String id) => _db.deleteParallelVerse(id);
 
   Future<Set<String>> getParallelVerseKeys(int bookNumber, int chapter) =>
       _db.getParallelVerseKeys(bookNumber, chapter);
@@ -210,27 +262,22 @@ class NotesProvider extends ChangeNotifier {
           int bookNumber, int chapter) =>
       _db.getWordCommentsForChapter(bookNumber, chapter);
 
-  Future<WordComment> addWordComment(
-          int bookNumber, int chapter, int verse, int wordNumber, String text) =>
+  Future<WordComment> addWordComment(int bookNumber, int chapter, int verse,
+          int wordNumber, String text) =>
       _db.addWordComment(bookNumber, chapter, verse, wordNumber, text);
 
-  Future<void> deleteWordComment(String id) =>
-      _db.deleteWordComment(id);
+  Future<void> deleteWordComment(String id) => _db.deleteWordComment(id);
 
   // ── Word Markup ─────────────────────────────────────────────────────────
 
-  Future<List<WordMarkup>> getMarkupsForChapter(
-          int bookNumber, int chapter) =>
+  Future<List<WordMarkup>> getMarkupsForChapter(int bookNumber, int chapter) =>
       _db.getMarkupsForChapter(bookNumber, chapter);
 
-  Future<WordMarkup> addMarkup(WordMarkup m) =>
-      _db.addMarkup(m);
+  Future<WordMarkup> addMarkup(WordMarkup m) => _db.addMarkup(m);
 
-  Future<void> deleteMarkup(String id) =>
-      _db.deleteMarkup(id);
+  Future<void> deleteMarkup(String id) => _db.deleteMarkup(id);
 
-  Future<void> deleteMarkupsForVerse(
-          int bookNumber, int chapter, int verse) =>
+  Future<void> deleteMarkupsForVerse(int bookNumber, int chapter, int verse) =>
       _db.deleteMarkupsForVerse(bookNumber, chapter, verse);
 
   // ── Note Folders ────────────────────────────────────────────────────────
@@ -255,6 +302,12 @@ class NotesProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> updateFolderColor(String id, int colorValue) async {
+    await _db.updateFolderColor(id, colorValue);
+    _folders = await _db.getAllFolders();
+    notifyListeners();
+  }
+
   Future<void> moveNoteToFolder(String noteId, String? folderId) async {
     await _db.moveNoteToFolder(noteId, folderId);
     final idx = _notes.indexWhere((n) => n.id == noteId);
@@ -272,6 +325,11 @@ class NotesProvider extends ChangeNotifier {
   Future<NoteTag> createTag(String name, {int colorValue = 0xFF2196F3}) async {
     final tag = await _db.createTag(name, colorValue: colorValue);
     _tags.add(tag);
+    // Создать заметку с таким же названием и первой строкой # НазваниеТега
+    await createNoteWithContent(
+      title: name,
+      content: '# $name\n',
+    );
     notifyListeners();
     return tag;
   }
@@ -294,11 +352,17 @@ class NotesProvider extends ChangeNotifier {
   Future<List<NoteTag>> getTagsForNote(String noteId) =>
       _db.getTagsForNote(noteId);
 
-  Future<void> addTagToNote(String noteId, String tagId) =>
-      _db.addTagToNote(noteId, tagId);
+  Future<void> addTagToNote(String noteId, String tagId) async {
+    await _db.addTagToNote(noteId, tagId);
+    _noteTagsCache[noteId] = await _db.getTagsForNote(noteId);
+    notifyListeners();
+  }
 
-  Future<void> removeTagFromNote(String noteId, String tagId) =>
-      _db.removeTagFromNote(noteId, tagId);
+  Future<void> removeTagFromNote(String noteId, String tagId) async {
+    await _db.removeTagFromNote(noteId, tagId);
+    _noteTagsCache[noteId] = await _db.getTagsForNote(noteId);
+    notifyListeners();
+  }
 
   // ── Verse Tags ────────────────────────────────────────────────────────────
 
@@ -311,15 +375,15 @@ class NotesProvider extends ChangeNotifier {
     required int bookNumber,
     required int chapter,
     required int verse,
-  }) => _db.addVerseTag(
-    tagId: tagId,
-    bookNumber: bookNumber,
-    chapter: chapter,
-    verse: verse,
-  );
+  }) =>
+      _db.addVerseTag(
+        tagId: tagId,
+        bookNumber: bookNumber,
+        chapter: chapter,
+        verse: verse,
+      );
 
-  Future<void> deleteVerseTag(String id) =>
-      _db.deleteVerseTag(id);
+  Future<void> deleteVerseTag(String id) => _db.deleteVerseTag(id);
 
   Future<List<VerseTag>> getVersesForTag(String tagId) =>
       _db.getVersesForTag(tagId);

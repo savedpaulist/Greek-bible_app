@@ -28,12 +28,12 @@ class WordModel {
   });
 
   factory WordModel.fromMap(Map<String, dynamic> map) => WordModel(
-        chapter:    map['chapter']     as int,
-        verse:      map['verse']       as int,
+        chapter: map['chapter'] as int,
+        verse: map['verse'] as int,
         wordNumber: map['word_number'] as int,
-        word:       map['word']        as String? ?? '',
-        strongs:    map['strongs']     as String?,
-        morphology: map['morphology']  as String?,
+        word: map['word'] as String? ?? '',
+        strongs: map['strongs'] as String?,
+        morphology: map['morphology'] as String?,
       );
 }
 
@@ -41,16 +41,19 @@ class VerseModel {
   final int chapter;
   final int verse;
   final List<WordModel> words;
-  const VerseModel({required this.chapter, required this.verse, required this.words});
+  const VerseModel(
+      {required this.chapter, required this.verse, required this.words});
 }
 
 class WordDetail {
-  final String  morphologyText;
-  final String? morphologyHtml;  // Linkified version of morphologyText
-  final String  definitionHtml;
+  final String morphologyText;
+  final String? morphologyHtml; // Linkified version of morphologyText
+  final String definitionHtml;
+
   /// Словарная форма (лемма) из колонки lexeme таблицы dictionary.
   /// Может быть null, если слово не найдено в словаре.
   final String? lexeme;
+
   /// Варианты словарной формы для перехода в другие словари.
   final List<String> lookupTerms;
 
@@ -67,7 +70,8 @@ class ReadingPosition {
   final int bookNumber;
   final int chapter;
   final int verse;
-  const ReadingPosition({required this.bookNumber, required this.chapter, required this.verse});
+  const ReadingPosition(
+      {required this.bookNumber, required this.chapter, required this.verse});
 }
 
 class SearchResult {
@@ -104,7 +108,8 @@ class HighlightTarget {
   final int chapter;
   final int verse;
   final String? strongs; // if null, highlight whole verse
-  const HighlightTarget({required this.chapter, required this.verse, this.strongs});
+  const HighlightTarget(
+      {required this.chapter, required this.verse, this.strongs});
 }
 
 // ── Search term (multi-word) ──────────────────────────────────────────────────
@@ -120,7 +125,7 @@ class SearchTerm {
 
 /// Represents a dictionary available in the app (e.g. Strong's, Liddell-Scott).
 class DictionaryMeta {
-  final String id;        // unique key, e.g. 'strongs_greek'
+  final String id; // unique key, e.g. 'strongs_greek'
   final String title;
   final String? description;
 
@@ -133,16 +138,31 @@ class DictionaryMeta {
 
 /// A single entry inside a dictionary.
 class DictionaryEntry {
-  final String term;          // the key / lemma shown as title
+  final String term; // the key / lemma shown as title
   final String definitionHtml; // HTML body (may contain markup from DB)
 
-  const DictionaryEntry({
+  DictionaryEntry({
     required this.term,
     required this.definitionHtml,
   });
 
+  static final _tagRe = RegExp(r'<[^>]*>');
+  static final _entityRe = RegExp(r'&\w+;');
+  static final _spaceRe = RegExp(r'\s{2,}');
+
+  String? _plainTextSuffix;
+  String get plainText {
+    if (_plainTextSuffix != null) return _plainTextSuffix!;
+    _plainTextSuffix = definitionHtml
+        .replaceAll(_tagRe, ' ')
+        .replaceAll(_entityRe, ' ')
+        .replaceAll(_spaceRe, ' ')
+        .trim();
+    return _plainTextSuffix!;
+  }
+
   factory DictionaryEntry.fromMap(Map<String, dynamic> map) => DictionaryEntry(
-        term:           map['topic']      as String? ?? '',
+        term: map['topic'] as String? ?? '',
         definitionHtml: map['definition'] as String? ?? '',
       );
 }
@@ -183,24 +203,24 @@ class ParallelVerse {
   });
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'source_book': sourceBook,
-    'source_chapter': sourceChapter,
-    'source_verse': sourceVerse,
-    'target_book': targetBook,
-    'target_chapter': targetChapter,
-    'target_verse': targetVerse,
-  };
+        'id': id,
+        'source_book': sourceBook,
+        'source_chapter': sourceChapter,
+        'source_verse': sourceVerse,
+        'target_book': targetBook,
+        'target_chapter': targetChapter,
+        'target_verse': targetVerse,
+      };
 
   factory ParallelVerse.fromMap(Map<String, dynamic> m) => ParallelVerse(
-    id: m['id'] as String,
-    sourceBook: m['source_book'] as int,
-    sourceChapter: m['source_chapter'] as int,
-    sourceVerse: m['source_verse'] as int,
-    targetBook: m['target_book'] as int,
-    targetChapter: m['target_chapter'] as int,
-    targetVerse: m['target_verse'] as int,
-  );
+        id: m['id'] as String,
+        sourceBook: m['source_book'] as int,
+        sourceChapter: m['source_chapter'] as int,
+        sourceVerse: m['source_verse'] as int,
+        targetBook: m['target_book'] as int,
+        targetChapter: m['target_chapter'] as int,
+        targetVerse: m['target_verse'] as int,
+      );
 }
 
 /// Комментарий к стиху
@@ -224,34 +244,36 @@ class VerseComment {
   });
 
   VerseComment copyWith({String? text, DateTime? updatedAt}) => VerseComment(
-    id: id,
-    bookNumber: bookNumber,
-    chapter: chapter,
-    verse: verse,
-    text: text ?? this.text,
-    createdAt: createdAt,
-    updatedAt: updatedAt ?? DateTime.now(),
-  );
+        id: id,
+        bookNumber: bookNumber,
+        chapter: chapter,
+        verse: verse,
+        text: text ?? this.text,
+        createdAt: createdAt,
+        updatedAt: updatedAt ?? DateTime.now(),
+      );
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'book_number': bookNumber,
-    'chapter': chapter,
-    'verse': verse,
-    'text': text,
-    'created_at': createdAt.toIso8601String(),
-    'updated_at': updatedAt.toIso8601String(),
-  };
+        'id': id,
+        'book_number': bookNumber,
+        'chapter': chapter,
+        'verse': verse,
+        'text': text,
+        'created_at': createdAt.toIso8601String(),
+        'updated_at': updatedAt.toIso8601String(),
+      };
 
   factory VerseComment.fromMap(Map<String, dynamic> m) => VerseComment(
-    id: m['id'] as String,
-    bookNumber: m['book_number'] as int,
-    chapter: m['chapter'] as int,
-    verse: m['verse'] as int,
-    text: m['text'] as String? ?? '',
-    createdAt: DateTime.tryParse(m['created_at'] as String? ?? '') ?? DateTime.now(),
-    updatedAt: DateTime.tryParse(m['updated_at'] as String? ?? '') ?? DateTime.now(),
-  );
+        id: m['id'] as String,
+        bookNumber: m['book_number'] as int,
+        chapter: m['chapter'] as int,
+        verse: m['verse'] as int,
+        text: m['text'] as String? ?? '',
+        createdAt: DateTime.tryParse(m['created_at'] as String? ?? '') ??
+            DateTime.now(),
+        updatedAt: DateTime.tryParse(m['updated_at'] as String? ?? '') ??
+            DateTime.now(),
+      );
 }
 
 /// Комментарий к отдельному слову (≤ 200 символов)
@@ -275,24 +297,25 @@ class WordComment {
   });
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'book_number': bookNumber,
-    'chapter': chapter,
-    'verse': verse,
-    'word_number': wordNumber,
-    'text': text,
-    'created_at': createdAt.toIso8601String(),
-  };
+        'id': id,
+        'book_number': bookNumber,
+        'chapter': chapter,
+        'verse': verse,
+        'word_number': wordNumber,
+        'text': text,
+        'created_at': createdAt.toIso8601String(),
+      };
 
   factory WordComment.fromMap(Map<String, dynamic> m) => WordComment(
-    id: m['id'] as String,
-    bookNumber: m['book_number'] as int,
-    chapter: m['chapter'] as int,
-    verse: m['verse'] as int,
-    wordNumber: m['word_number'] as int,
-    text: m['text'] as String? ?? '',
-    createdAt: DateTime.tryParse(m['created_at'] as String? ?? '') ?? DateTime.now(),
-  );
+        id: m['id'] as String,
+        bookNumber: m['book_number'] as int,
+        chapter: m['chapter'] as int,
+        verse: m['verse'] as int,
+        wordNumber: m['word_number'] as int,
+        text: m['text'] as String? ?? '',
+        createdAt: DateTime.tryParse(m['created_at'] as String? ?? '') ??
+            DateTime.now(),
+      );
 }
 
 /// Подчёркивание / выделение фона слова или стиха
@@ -311,10 +334,10 @@ class WordMarkup {
   final int bookNumber;
   final int chapter;
   final int verse;
-  final int? wordNumber;   // null → весь стих (фон)
+  final int? wordNumber; // null → весь стих (фон)
   final MarkupKind kind;
-  final int colorIndex;    // index in the theme palette
-  final int? colorValue;   // ARGB int — if set, overrides colorIndex
+  final int colorIndex; // index in the theme palette
+  final int? colorValue; // ARGB int — if set, overrides colorIndex
 
   const WordMarkup({
     required this.id,
@@ -328,27 +351,27 @@ class WordMarkup {
   });
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'book_number': bookNumber,
-    'chapter': chapter,
-    'verse': verse,
-    'word_number': wordNumber,
-    'kind': kind.name,
-    'color_index': colorIndex,
-    'color_value': colorValue,
-  };
+        'id': id,
+        'book_number': bookNumber,
+        'chapter': chapter,
+        'verse': verse,
+        'word_number': wordNumber,
+        'kind': kind.name,
+        'color_index': colorIndex,
+        'color_value': colorValue,
+      };
 
   factory WordMarkup.fromMap(Map<String, dynamic> m) => WordMarkup(
-    id: m['id'] as String,
-    bookNumber: m['book_number'] as int,
-    chapter: m['chapter'] as int,
-    verse: m['verse'] as int,
-    wordNumber: m['word_number'] as int?,
-    kind: MarkupKind.values.firstWhere(
-      (k) => k.name == (m['kind'] as String? ?? 'underlineSingle'),
-      orElse: () => MarkupKind.underlineSingle,
-    ),
-    colorIndex: m['color_index'] as int? ?? 0,
-    colorValue: m['color_value'] as int?,
-  );
+        id: m['id'] as String,
+        bookNumber: m['book_number'] as int,
+        chapter: m['chapter'] as int,
+        verse: m['verse'] as int,
+        wordNumber: m['word_number'] as int?,
+        kind: MarkupKind.values.firstWhere(
+          (k) => k.name == (m['kind'] as String? ?? 'underlineSingle'),
+          orElse: () => MarkupKind.underlineSingle,
+        ),
+        colorIndex: m['color_index'] as int? ?? 0,
+        colorValue: m['color_value'] as int?,
+      );
 }

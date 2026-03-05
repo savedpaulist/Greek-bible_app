@@ -1,84 +1,45 @@
-// lib/db_service.dart
+// lib/core/db/db_service.dart
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
-import "../models/models.dart";
+import '../models/models.dart';
+import '../utils/greek_utils.dart';
 
-// ── Greek diacritics normalizer ───────────────────────────────────────────────
-/// Strips all Greek diacritics (accents, breathings, iota subscript) and
-/// lowercases.  Works with both NFC (precomposed) and NFD (decomposed) input.
-String normalizeGreek(String s) {
-  final buf = StringBuffer();
-  for (final rune in s.runes) {
-    final ch = String.fromCharCode(rune);
-    buf.write(_dMap[ch] ?? ch);
-  }
-  // Strip any remaining Unicode combining marks (handles NFD input).
-  return buf.toString().toLowerCase().replaceAll(
-      RegExp('[\u0300-\u036f\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]'),
-      '');
-}
+// Re-export so existing callers still see normalizeGreek
+export '../utils/greek_utils.dart' show normalizeGreek;
 
-final Map<String, String> _dMap = () {
-  final m = <String, String>{};
-  void add(List<String> chars, String base) { for (final c in chars) {
-    m[c] = base;
-  } }
-  add(['ά','ά','ἀ','ἁ','ἂ','ἃ','ἄ','ἅ','ἆ','ἇ','ᾀ','ᾁ','ᾂ','ᾃ','ᾄ','ᾅ','ᾆ','ᾇ',
-       'ᾰ','ᾱ','ᾲ','ᾳ','ᾴ','ᾶ','ᾷ','Ά','Ά','Ἀ','Ἁ','Ἂ','Ἃ','Ἄ','Ἅ','Ἆ','Ἇ',
-       'ᾈ','ᾉ','ᾊ','ᾋ','ᾌ','ᾍ','ᾎ','ᾏ','Ᾰ','Ᾱ','Ὰ','Ά','ᾼ','α','Α'], 'α');
-  add(['έ','έ','ἐ','ἑ','ἒ','ἓ','ἔ','ἕ','Έ','Έ','Ἐ','Ἑ','Ἒ','Ἓ','Ἔ','Ἕ','Ὲ','Έ','ε','Ε'], 'ε');
-  add(['ή','ή','ἠ','ἡ','ἢ','ἣ','ἤ','ἥ','ἦ','ἧ','ᾐ','ᾑ','ᾒ','ᾓ','ᾔ','ᾕ','ᾖ','ᾗ',
-       'ῂ','ῃ','ῄ','ῆ','ῇ','Ή','Ή','Ἠ','Ἡ','Ἢ','Ἣ','Ἤ','Ἥ','Ἦ','Ἧ','ᾘ','ᾙ',
-       'ᾚ','ᾛ','ᾜ','ᾝ','ᾞ','ᾟ','Ὴ','Ή','ῌ','η','Η'], 'η');
-  add(['ί','ί','ἰ','ἱ','ἲ','ἳ','ἴ','ἵ','ἶ','ἷ','ῐ','ῑ','ῒ','ΐ','ῖ','ῗ',
-       'Ί','Ί','Ἰ','Ἱ','Ἲ','Ἳ','Ἴ','Ἵ','Ἶ','Ἷ','Ῐ','Ῑ','Ὶ','Ί','ι','Ι'], 'ι');
-  add(['ό','ό','ὀ','ὁ','ὂ','ὃ','ὄ','ὅ','Ό','Ό','Ὀ','Ὁ','Ὂ','Ὃ','Ὄ','Ὅ','Ὸ','Ό','ο','Ο'], 'ο');
-  add(['ύ','ύ','ὐ','ὑ','ὒ','ὓ','ὔ','ὕ','ὖ','ὗ','ῠ','ῡ','ῢ','ΰ','ῦ','ῧ',
-       'Ύ','Ύ','Ὑ','Ὓ','Ὕ','Ὗ','Ῠ','Ῡ','Ὺ','Ύ','υ','Υ'], 'υ');
-  add(['ώ','ώ','ὠ','ὡ','ὢ','ὣ','ὤ','ὥ','ὦ','ὧ','ᾠ','ᾡ','ᾢ','ᾣ','ᾤ','ᾥ','ᾦ','ᾧ',
-       'ῲ','ῳ','ῴ','ῶ','ῷ','Ώ','Ώ','Ὠ','Ὡ','Ὢ','Ὣ','Ὤ','Ὥ','Ὦ','Ὧ','ᾨ','ᾩ',
-       'ᾪ','ᾫ','ᾬ','ᾭ','ᾮ','ᾯ','Ὼ','Ώ','ῼ','ω','Ω'], 'ω');
-  add(['ῤ','ῥ','Ῥ','ρ','Ρ'], 'ρ');
-  add(['β','Β'], 'β'); add(['γ','Γ'], 'γ'); add(['δ','Δ'], 'δ');
-  add(['ζ','Ζ'], 'ζ'); add(['θ','Θ'], 'θ'); add(['κ','Κ'], 'κ');
-  add(['λ','Λ'], 'λ'); add(['μ','Μ'], 'μ'); add(['ν','Ν'], 'ν');
-  add(['ξ','Ξ'], 'ξ'); add(['π','Π'], 'π'); add(['σ','ς','Σ'], 'σ');
-  add(['τ','Τ'], 'τ'); add(['φ','Φ'], 'φ'); add(['χ','Χ'], 'χ');
-  add(['ψ','Ψ'], 'ψ');
-  return m;
-}();
-
-// ─────────────────────────────────────────────────────────────────────────────
 class DBService {
-  static const _bibleAsset  = 'assets/LXX_BYZ_WORDS_ONLY.SQLite3';
+  static const _bibleAsset = 'assets/LXX_BYZ_WORDS_ONLY.SQLite3';
 
   // ── Словари ───────────────────────────────────────────────────────────────
   // Ключи совпадают с DictionaryMeta.id в DictionaryService
   static const Map<String, String> _dictAssets = {
-    'strongs' : 'assets/СтрДв.dictionary.SQLite3',
-    'tdnt'    : 'assets/TDNT.dictionary 2.SQLite3',
-    'cbtel'   : 'assets/CBTEL.dictionary.SQLite3',
-    'bdag3'   : 'assets/BDAG3.dictionary.SQLite3',
-    'morph'   : 'assets/gr-en.dictionary.SQLite3',
-    'dvor'    : 'assets/DvorFull.sqlite3',
-    'lsj'     : 'assets/LSJ.dictionary.SQLite3',
+    'strongs': 'assets/СтрДв.dictionary.SQLite3',
+    'tdnt': 'assets/TDNT.dictionary 2.SQLite3',
+    'cbtel': 'assets/CBTEL.dictionary.SQLite3',
+    'bdag3': 'assets/BDAG3.dictionary.SQLite3',
+    'morph': 'assets/gr-en.dictionary.SQLite3',
+    'dvor': 'assets/DvorFull.sqlite3',
+    'lsj': 'assets/LSJ.dictionary.SQLite3',
     'cambridge': 'assets/Cambridge.sqlite3',
+    'sece': 'assets/SECE.dictionary.SQLite3',
   };
   static const Map<String, String> _dictFiles = {
-    'strongs' : 'dict_strongs.db',
-    'tdnt'    : 'dict_tdnt.db',
-    'cbtel'   : 'dict_cbtel.db',
-    'bdag3'   : 'dict_bdag3.db',
-    'morph'   : 'dict_morph_gr_en.db',
-    'dvor'    : 'dict_dvor.db',
-    'lsj'     : 'dict_lsj.db',
+    'strongs': 'dict_strongs.db',
+    'tdnt': 'dict_tdnt.db',
+    'cbtel': 'dict_cbtel.db',
+    'bdag3': 'dict_bdag3.db',
+    'morph': 'dict_morph_gr_en.db',
+    'dvor': 'dict_dvor.db',
+    'lsj': 'dict_lsj.db',
     'cambridge': 'dict_cambridge.db',
+    'sece': 'dict_sece.db',
   };
 
   Database? _bibleDb;
+
   /// Основной словарь Стронга (для getWordDetail / getMorphologyText)
   Database? get _strongsDb => _dictDbs['strongs'];
   final Map<String, Database> _dictDbs = {};
@@ -98,7 +59,7 @@ class DBService {
   /// Resolve the actual directory where DB files live.
   Future<String> _dbDir() async => _basePath ?? await getDatabasesPath();
 
-  Future<void> init({String? basePath}) async {
+  Future<void> initBible({String? basePath}) async {
     _basePath = basePath;
     // Make sure the directory exists (important for external storage)
     if (_basePath != null) {
@@ -106,7 +67,17 @@ class DBService {
       if (!dir.existsSync()) dir.createSync(recursive: true);
     }
     _bibleDb = await _openReadOnly(_bibleAsset, 'bible.db');
+  }
+
+  /// Close and reopen the Bible database (recovery after fsync race on Android).
+  Future<void> reopenBible() async {
+    try { await _bibleDb?.close(); } catch (_) {}
+    _bibleDb = await _openReadOnly(_bibleAsset, 'bible.db');
+  }
+
+  Future<void> initDictionaries() async {
     for (final entry in _dictAssets.entries) {
+      if (_dictDbs.containsKey(entry.key)) continue;
       try {
         _dictDbs[entry.key] =
             await _openDictionaryDb(entry.value, _dictFiles[entry.key]!);
@@ -161,9 +132,7 @@ class DBService {
     if (isCompressed) {
       // Streaming gzip decompression — memory ≈ compressed size + buffer
       final output = File(tmpPath).openWrite();
-      await Stream<List<int>>.value(bytes)
-          .transform(gzip.decoder)
-          .pipe(output);
+      await Stream<List<int>>.value(bytes).transform(gzip.decoder).pipe(output);
     } else {
       await File(tmpPath).writeAsBytes(bytes, flush: true);
     }
@@ -188,10 +157,16 @@ class DBService {
       bool hasTopicIdx = false;
       for (final idx in indexes) {
         final name = idx['name'] as String? ?? '';
-        if (name.contains('topic')) { hasTopicIdx = true; break; }
+        if (name.contains('topic')) {
+          hasTopicIdx = true;
+          break;
+        }
         final info = await db.rawQuery("PRAGMA index_info('$name')");
         for (final col in info) {
-          if ((col['name'] as String?) == 'topic') { hasTopicIdx = true; break; }
+          if ((col['name'] as String?) == 'topic') {
+            hasTopicIdx = true;
+            break;
+          }
         }
         if (hasTopicIdx) break;
       }
@@ -337,16 +312,34 @@ class DBService {
   }
 
   // ── Strong's definition ────────────────────────────────────────────────────
-  Future<String?> getStrongsDefinition(String strongs) async {
+  Future<String?> getStrongsDefinition(String strongs, {String language = 'ru'}) async {
     final clean = strongs.replaceAll(RegExp(r'^[A-Za-z]+'), '');
-    final rows  = await _strongsDb!.rawQuery(
+    // EN: use SECE dictionary if available
+    if (language == 'en') {
+      final sece = _dictDbs['sece'];
+      if (sece != null) {
+        final rows = await sece.rawQuery(
+            'SELECT definition FROM dictionary WHERE topic=? LIMIT 1', ['G$clean']);
+        if (rows.isNotEmpty) return rows.first['definition'] as String?;
+      }
+    }
+    final rows = await _strongsDb!.rawQuery(
         'SELECT definition FROM dictionary WHERE topic=? LIMIT 1', ['G$clean']);
     return rows.isEmpty ? null : rows.first['definition'] as String?;
   }
 
   // ── Morphology ─────────────────────────────────────────────────────────────
-  Future<String> getMorphologyText(String morphology) async {
-    final db      = _strongsDb!;
+  Future<String> getMorphologyText(String morphology, {String language = 'ru'}) async {
+    // EN: use SECE morphology_indications table if available
+    if (language == 'en') {
+      final sece = _dictDbs['sece'];
+      if (sece != null) {
+        final result = await _getMorphologyFromSece(sece, morphology);
+        if (result.isNotEmpty) return result;
+      }
+    }
+
+    final db = _strongsDb!;
     final results = <String>[];
 
     Future<String?> lookup(String code) async {
@@ -367,18 +360,25 @@ class DBService {
       segIdx++;
 
       final m = await lookup(ind);
-      if (m != null && m.isNotEmpty) { results.add(m); continue; }
+      if (m != null && m.isNotEmpty) {
+        results.add(m);
+        continue;
+      }
 
       if (seg.length > 1) {
         bool found = false;
         for (int len = 1; len < seg.length && !found; len++) {
-          final sub = segIdx == 1 ? seg.substring(0, len) : '-${seg.substring(0, len)}';
-          final sm  = await lookup(sub);
-          if (sm != null && sm.isNotEmpty) { results.add(sm); found = true; }
+          final sub =
+              segIdx == 1 ? seg.substring(0, len) : '-${seg.substring(0, len)}';
+          final sm = await lookup(sub);
+          if (sm != null && sm.isNotEmpty) {
+            results.add(sm);
+            found = true;
+          }
         }
         if (!found && seg.length >= 2) {
           final suf = '-${seg.substring(seg.length - 2)}';
-          final sm  = await lookup(suf);
+          final sm = await lookup(suf);
           if (sm != null && sm.isNotEmpty) results.add(sm);
         }
       }
@@ -386,32 +386,114 @@ class DBService {
     return results.isEmpty ? morphology : results.join(', ');
   }
 
-  // ── Word detail ────────────────────────────────────────────────────────────
-  Future<WordDetail> getWordDetail(WordModel word) async {
-    final morph = (word.morphology?.isNotEmpty ?? false)
-        ? await getMorphologyText(word.morphology!) : '';
+  /// Lookup morphology from SECE dictionary's morphology_indications table.
+  /// SECE table has columns: indication, applicable_to, meaning.
+  /// Morphology codes split by '-': first part is the base (applicable_to=''),
+  /// subsequent parts have applicable_to set to the base part.
+  Future<String> _getMorphologyFromSece(Database sece, String morphology) async {
+    // Try full code first
+    final fullRows = await sece.rawQuery(
+      'SELECT meaning FROM morphology_indications WHERE indication=? LIMIT 1',
+      [morphology],
+    );
+    if (fullRows.isNotEmpty) {
+      final m = fullRows.first['meaning'] as String?;
+      if (m != null && m.isNotEmpty) return m;
+    }
 
-    String  def    = '<p>Нет данных</p>';
+    final parts = morphology.split('-');
+    if (parts.isEmpty) return '';
+
+    final results = <String>[];
+    // First part: base code (e.g. 'V' for verb, 'N' for noun)
+    final base = parts[0];
+    if (base.isNotEmpty) {
+      final rows = await sece.rawQuery(
+        'SELECT meaning FROM morphology_indications WHERE indication=? LIMIT 1',
+        [base],
+      );
+      if (rows.isNotEmpty) {
+        final m = rows.first['meaning'] as String?;
+        if (m != null && m.isNotEmpty) results.add(m);
+      }
+    }
+
+    // Subsequent parts: lookup with applicable_to = base
+    for (int i = 1; i < parts.length; i++) {
+      final seg = parts[i];
+      if (seg.isEmpty) continue;
+      final ind = '-$seg';
+
+      // Try with applicable_to = base first
+      var rows = await sece.rawQuery(
+        'SELECT meaning FROM morphology_indications '
+        'WHERE indication=? AND applicable_to=? LIMIT 1',
+        [ind, base],
+      );
+      if (rows.isEmpty) {
+        // Fallback: without applicable_to constraint
+        rows = await sece.rawQuery(
+          'SELECT meaning FROM morphology_indications WHERE indication=? LIMIT 1',
+          [ind],
+        );
+      }
+      if (rows.isNotEmpty) {
+        final m = rows.first['meaning'] as String?;
+        if (m != null && m.isNotEmpty) results.add(m);
+      }
+    }
+
+    return results.join(', ');
+  }
+
+  // ── Word detail ────────────────────────────────────────────────────────────
+  Future<WordDetail> getWordDetail(WordModel word, {String language = 'ru'}) async {
+    final morph = (word.morphology?.isNotEmpty ?? false)
+        ? await getMorphologyText(word.morphology!, language: language)
+        : '';
+
+    String def = language == 'en' ? '<p>No data</p>' : '<p>Нет данных</p>';
     String? lexeme;
     final lookupTerms = <String>[];
 
     if (word.strongs?.isNotEmpty ?? false) {
       final clean = word.strongs!.replaceAll(RegExp(r'^[A-Za-z]+'), '');
-      final rows  = await _strongsDb!.rawQuery(
-          'SELECT definition, lexeme FROM dictionary WHERE topic=? LIMIT 1',
-          ['G$clean']);
-      if (rows.isNotEmpty) {
-        def    = rows.first['definition'] as String? ?? def;
-        lexeme = rows.first['lexeme']     as String?;
-        if (lexeme != null && lexeme.isEmpty) lexeme = null;
-        if (lexeme != null) {
-          lookupTerms.add(lexeme);
+
+      // EN: prefer SECE dictionary for Strong's definitions
+      if (language == 'en') {
+        final sece = _dictDbs['sece'];
+        if (sece != null) {
+          final seceRows = await sece.rawQuery(
+              'SELECT definition, lexeme, transliteration, pronunciation, short_definition '
+              'FROM dictionary WHERE topic=? LIMIT 1',
+              ['G$clean']);
+          if (seceRows.isNotEmpty) {
+            def = seceRows.first['definition'] as String? ?? def;
+            lexeme = seceRows.first['lexeme'] as String?;
+            if (lexeme != null && lexeme.isEmpty) lexeme = null;
+            if (lexeme != null) lookupTerms.add(lexeme);
+          }
+        }
+      }
+
+      // Fallback or RU: use default Strong's dictionary
+      if (def == (language == 'en' ? '<p>No data</p>' : '<p>Нет данных</p>')) {
+        final rows = await _strongsDb!.rawQuery(
+            'SELECT definition, lexeme FROM dictionary WHERE topic=? LIMIT 1',
+            ['G$clean']);
+        if (rows.isNotEmpty) {
+          def = rows.first['definition'] as String? ?? def;
+          lexeme = rows.first['lexeme'] as String?;
+          if (lexeme != null && lexeme.isEmpty) lexeme = null;
+          if (lexeme != null) lookupTerms.add(lexeme);
         }
       }
     }
 
     final noStrongs = !(word.strongs?.trim().isNotEmpty ?? false);
-    final noData = RegExp(r'нет\s+данных', caseSensitive: false).hasMatch(def);
+    final noData = language == 'en'
+        ? def == '<p>No data</p>'
+        : RegExp(r'нет\s+данных', caseSensitive: false).hasMatch(def);
     if (noStrongs || noData) {
       final morphRows = await _lookupMorphologyRows(word.word);
       if (morphRows.isNotEmpty) {
@@ -447,11 +529,10 @@ class DBService {
     );
   }
 
-  // Convert morphology text (like "Present Tense, 3rd Person Singular") to HTML
-  // with clickable words that search across dictionaries
+  // Convert morphology text to HTML with clickable words
   String _linkifyMorphologyText(String text) {
-    // Match words (English or Greek)
-    final wordPattern = RegExp(r'[A-Za-z][A-Za-z\-]*|[α-ωάέήίόύώΐΰ]+', unicode: true);
+    final wordPattern =
+        RegExp(r'[A-Za-z][A-Za-z\-]*|[α-ωάέήίόύώΐΰ]+', unicode: true);
     return text.replaceAllMapped(wordPattern, (match) {
       final word = match.group(0) ?? '';
       if (word.isEmpty) return '';
@@ -460,7 +541,8 @@ class DBService {
     });
   }
 
-  Future<List<Map<String, dynamic>>> _lookupMorphologyRows(String sourceWord) async {
+  Future<List<Map<String, dynamic>>> _lookupMorphologyRows(
+      String sourceWord) async {
     final db = _dictDbs['morph'];
     if (db == null) return const [];
     final word = sourceWord.trim();
@@ -482,7 +564,8 @@ class DBService {
 
   List<String> _extractMorphLemmas(String html) {
     final out = <String>[];
-    final boldFollow = RegExp(r'<b>[^<]+</b>\s*([^<\s]+)', caseSensitive: false);
+    final boldFollow =
+        RegExp(r'<b>[^<]+</b>\s*([^<\s]+)', caseSensitive: false);
     for (final match in boldFollow.allMatches(html)) {
       final lemma = (match.group(1) ?? '').trim();
       if (lemma.isNotEmpty) out.add(lemma);
@@ -492,21 +575,25 @@ class DBService {
 
   // ── Morphology picker ──────────────────────────────────────────────────────
   Future<List<MorphEntry>> getFirstLevelMorphCodes() async {
-    final rows = await _strongsDb!.rawQuery(
-        "SELECT indication, meaning FROM morphology_indications "
-        "WHERE indication NOT LIKE '-%' ORDER BY indication");
-    return rows.map((r) => MorphEntry(
-        indication: r['indication'] as String,
-        meaning: r['meaning'] as String? ?? '')).toList();
+    final rows = await _strongsDb!
+        .rawQuery("SELECT indication, meaning FROM morphology_indications "
+            "WHERE indication NOT LIKE '-%' ORDER BY indication");
+    return rows
+        .map((r) => MorphEntry(
+            indication: r['indication'] as String,
+            meaning: r['meaning'] as String? ?? ''))
+        .toList();
   }
 
   Future<List<MorphEntry>> getSecondLevelMorphCodes() async {
-    final rows = await _strongsDb!.rawQuery(
-        "SELECT indication, meaning FROM morphology_indications "
-        "WHERE indication LIKE '-%' ORDER BY indication");
-    return rows.map((r) => MorphEntry(
-        indication: r['indication'] as String,
-        meaning: r['meaning'] as String? ?? '')).toList();
+    final rows = await _strongsDb!
+        .rawQuery("SELECT indication, meaning FROM morphology_indications "
+            "WHERE indication LIKE '-%' ORDER BY indication");
+    return rows
+        .map((r) => MorphEntry(
+            indication: r['indication'] as String,
+            meaning: r['meaning'] as String? ?? ''))
+        .toList();
   }
 
   // ── FTS index ──────────────────────────────────────────────────────────────
@@ -516,8 +603,6 @@ class DBService {
   bool _isBuilding = false;
 
   /// Check whether the search index file physically exists and is non-empty.
-  /// Used by AppState to detect stale prefs (prefs say "built" but file is
-  /// missing, e.g. after partial data clear).
   Future<bool> indexFileExists() async {
     final path = join(await _dbDir(), 'search_index.db');
     final f = File(path);
@@ -528,14 +613,16 @@ class DBService {
   /// from scratch.
   Future<void> deleteIndex() async {
     if (_indexDb != null) {
-      try { await _indexDb!.close(); } catch (_) {}
+      try {
+        await _indexDb!.close();
+      } catch (_) {}
       _indexDb = null;
     }
-    final dir  = await _dbDir();
+    final dir = await _dbDir();
     final path = join(dir, 'search_index.db');
-    final tmp  = join(dir, 'search_index.tmp.db');
+    final tmp = join(dir, 'search_index.tmp.db');
     if (File(path).existsSync()) await File(path).delete();
-    if (File(tmp).existsSync())  await File(tmp).delete();
+    if (File(tmp).existsSync()) await File(tmp).delete();
   }
 
   Future<void> buildIndex({void Function(double)? onProgress}) async {
@@ -545,14 +632,12 @@ class DBService {
     _isBuilding = true;
     Database? tmpDb;
     try {
-      final dir  = await _dbDir();
+      final dir = await _dbDir();
       final path = join(dir, 'search_index.db');
-      final tmp  = join(dir, 'search_index.tmp.db');
+      final tmp = join(dir, 'search_index.tmp.db');
 
       debugPrint('buildIndex: dir=$dir');
 
-      // Build into a temporary file so that _ensureIndex never opens a
-      // half-built database.
       if (File(tmp).existsSync()) await File(tmp).delete();
       if (File(path).existsSync()) await File(path).delete();
 
@@ -572,7 +657,9 @@ class DBService {
         'PRAGMA journal_mode = MEMORY',
         'PRAGMA cache_size = -50000',
       ]) {
-        try { await tmpDb.execute(pragma); } catch (_) {}
+        try {
+          await tmpDb.execute(pragma);
+        } catch (_) {}
       }
 
       // Cache book names
@@ -585,47 +672,49 @@ class DBService {
       }
       await bb.commit(noResult: true);
 
-      // Load all words once
-      final words = await _bibleDb!.rawQuery(
-          'SELECT book_number, chapter, verse, word, strongs, morphology FROM words');
-      final total = words.length;
-      debugPrint('buildIndex: $total words to index');
+      // ── Indexing words book-by-book ──
+      int indexedCount = 0;
+      for (int i = 0; i < books.length; i++) {
+        final book = books[i];
+        final bookWords = await _bibleDb!.rawQuery(
+            'SELECT book_number, chapter, verse, word, strongs, morphology FROM words WHERE book_number = ?',
+            [book.bookNumber]);
 
-      if (total == 0) {
-        await tmpDb.close();
-        tmpDb = null;
-        if (File(tmp).existsSync()) await File(tmp).delete();
-        throw StateError(
-            'buildIndex: words table is empty — bible database may be corrupted');
-      }
+        if (bookWords.isEmpty) continue;
 
-      // Pre-normalize all words in a background isolate (CPU-intensive)
-      final rawWords = words.map((w) => w['word'] as String? ?? '').toList();
-      final normalizedWords = await compute(_batchNormalizeGreek, rawWords);
+        final rawTexts =
+            bookWords.map((w) => w['word'] as String? ?? '').toList();
+        final normalizedTexts = await compute(batchNormalizeGreek, rawTexts);
 
-      // Insert in larger chunks (5000 instead of 2000) for fewer transactions
-      const chunk = 5000;
-
-      for (int start = 0; start < total; start += chunk) {
-        final end   = (start + chunk).clamp(0, total);
         final batch = tmpDb.batch();
-        for (int i = start; i < end; i++) {
-          final w  = words[i];
-          final ws = w['word'] as String? ?? '';
+        for (int j = 0; j < bookWords.length; j++) {
+          final w = bookWords[j];
           batch.rawInsert(
               'INSERT INTO words_fts'
               '(book_number,chapter,verse,word,word_norm,strongs,morphology)'
               ' VALUES(?,?,?,?,?,?,?)',
-              [w['book_number'], w['chapter'], w['verse'],
-               ws, normalizedWords[i], w['strongs'], w['morphology']]);
+              [
+                w['book_number'],
+                w['chapter'],
+                w['verse'],
+                w['word'],
+                normalizedTexts[j],
+                w['strongs'],
+                w['morphology']
+              ]);
         }
         await batch.commit(noResult: true);
-        onProgress?.call(end / total);
+
+        indexedCount += bookWords.length;
+        onProgress?.call((i + 1) / books.length);
       }
+
+      debugPrint('buildIndex: Finished indexing $indexedCount words');
 
       // Optimize the FTS index for faster queries
       try {
-        await tmpDb.execute("INSERT INTO words_fts(words_fts) VALUES('optimize')");
+        await tmpDb
+            .execute("INSERT INTO words_fts(words_fts) VALUES('optimize')");
       } catch (_) {}
 
       // Verify the index has actual content
@@ -651,18 +740,13 @@ class DBService {
       debugPrint('buildIndex: ✓ done');
     } catch (e) {
       debugPrint('buildIndex error: $e');
-      // Close tmpDb if it was opened but not yet closed
-      try { await tmpDb?.close(); } catch (_) {}
+      try {
+        await tmpDb?.close();
+      } catch (_) {}
       rethrow;
     } finally {
       _isBuilding = false;
     }
-  }
-
-  /// Top-level function for compute() — normalizes Greek words in a separate
-  /// isolate to avoid blocking the UI thread.
-  static List<String> _batchNormalizeGreek(List<String> words) {
-    return words.map(normalizeGreek).toList();
   }
 
   // ── Search ─────────────────────────────────────────────────────────────────
@@ -685,33 +769,46 @@ class DBService {
         final clean = t.value.replaceAll(RegExp(r'^[GgА-Яа-я]+'), '');
         try {
           rows = await _indexDb!.rawQuery(
-            'SELECT DISTINCT book_number, chapter, verse FROM words_fts WHERE strongs MATCH ?',
-            [clean]);
+              'SELECT DISTINCT book_number, chapter, verse FROM words_fts WHERE strongs MATCH ?',
+              [clean]);
         } catch (_) {
           rows = await _indexDb!.rawQuery(
-            'SELECT DISTINCT book_number, chapter, verse FROM words_fts WHERE strongs = ?',
-            [clean]);
+              'SELECT DISTINCT book_number, chapter, verse FROM words_fts WHERE strongs = ?',
+              [clean]);
         }
       } else {
         final norm = normalizeGreek(t.value);
         rows = await _indexDb!.rawQuery(
-          'SELECT DISTINCT book_number, chapter, verse FROM words_fts WHERE word_norm LIKE ?',
-          ['%$norm%']);
+            'SELECT DISTINCT book_number, chapter, verse FROM words_fts WHERE word_norm LIKE ?',
+            ['%$norm%']);
       }
-      final keys = rows.map((r) => '${r['book_number']}:${r['chapter']}:${r['verse']}').toSet();
-      intersection = intersection == null ? keys : intersection.intersection(keys);
+      final keys = rows
+          .map((r) => '${r['book_number']}:${r['chapter']}:${r['verse']}')
+          .toSet();
+      intersection =
+          intersection == null ? keys : intersection.intersection(keys);
       if (intersection.isEmpty) return []; // early exit
     }
     if (intersection == null || intersection.isEmpty) return [];
 
     // Step 2: Fetch full rows for the intersected verses (limit 300).
-    final limited = intersection.take(300).toList();
+    final sortedKeys = intersection.toList()
+      ..sort((a, b) {
+        final pa = a.split(':').map(int.parse).toList();
+        final pb = b.split(':').map(int.parse).toList();
+        if (pa[0] != pb[0]) return pa[0].compareTo(pb[0]);
+        if (pa[1] != pb[1]) return pa[1].compareTo(pb[1]);
+        return pa[2].compareTo(pb[2]);
+      });
+
+    final limited = sortedKeys.take(300).toList();
     final placeholders = <String>[];
     final args = <dynamic>[];
     for (final key in limited) {
       final parts = key.split(':');
       placeholders.add('(book_number=? AND chapter=? AND verse=?)');
-      args.addAll([int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2])]);
+      args.addAll(
+          [int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2])]);
     }
     final sql = '''
       SELECT book_number, chapter, verse, word, strongs, morphology
@@ -738,22 +835,23 @@ class DBService {
     // Try FTS MATCH first (fast)
     try {
       rows = await _indexDb!.rawQuery(
-        'SELECT book_number, chapter, verse, word, strongs, morphology '
-        'FROM words_fts WHERE strongs MATCH ? LIMIT 300', [clean]);
+          'SELECT book_number, chapter, verse, word, strongs, morphology '
+          'FROM words_fts WHERE strongs MATCH ? LIMIT 300',
+          [clean]);
     } catch (_) {}
 
     // Fallback: exact match via full scan (no JOIN – fast on FTS)
     if (rows.isEmpty) {
       try {
         rows = await _indexDb!.rawQuery(
-          'SELECT book_number, chapter, verse, word, strongs, morphology '
-          'FROM words_fts WHERE strongs = ? LIMIT 300', [clean]);
+            'SELECT book_number, chapter, verse, word, strongs, morphology '
+            'FROM words_fts WHERE strongs = ? LIMIT 300',
+            [clean]);
       } catch (_) {}
     }
 
     if (rows.isEmpty) return [];
 
-    // Batch-lookup book short names
     return _mapWithBookNames(rows);
   }
 
@@ -761,8 +859,9 @@ class DBService {
     if (!await _ensureIndex()) return [];
     try {
       final rows = await _indexDb!.rawQuery(
-        'SELECT book_number, chapter, verse, word, strongs, morphology '
-        'FROM words_fts WHERE morphology MATCH ? LIMIT 300', [morph.trim()]);
+          'SELECT book_number, chapter, verse, word, strongs, morphology '
+          'FROM words_fts WHERE morphology MATCH ? LIMIT 300',
+          [morph.trim()]);
       return _mapWithBookNames(rows);
     } catch (_) {
       return _likeFallback('morphology', morph.trim());
@@ -773,47 +872,49 @@ class DBService {
     if (!await _ensureIndex()) return [];
     try {
       final rows = await _indexDb!.rawQuery(
-        'SELECT book_number, chapter, verse, word, strongs, morphology '
-        'FROM words_fts WHERE $col LIKE ? LIMIT 300', ['%$q%']);
+          'SELECT book_number, chapter, verse, word, strongs, morphology '
+          'FROM words_fts WHERE $col LIKE ? LIMIT 300',
+          ['%$q%']);
       return _mapWithBookNames(rows);
     } catch (_) {
       return [];
     }
   }
 
-  /// Maps FTS rows (without short_name) to SearchResult, batch-looking up book names.
-  Future<List<SearchResult>> _mapWithBookNames(List<Map<String, dynamic>> rows) async {
+  /// Maps FTS rows to SearchResult, batch-looking up book names.
+  Future<List<SearchResult>> _mapWithBookNames(
+      List<Map<String, dynamic>> rows) async {
     if (rows.isEmpty) return [];
     final bookIds = rows.map((r) => r['book_number']).toSet().toList();
-    final bookRows = await _indexDb!.rawQuery(
-      'SELECT book_number, short_name FROM books_cache '
-      'WHERE book_number IN (${bookIds.join(",")})');
-    final bookNames = {for (final b in bookRows) b['book_number'] as int: b['short_name'] as String};
+    final bookRows = await _indexDb!
+        .rawQuery('SELECT book_number, short_name FROM books_cache '
+            'WHERE book_number IN (${bookIds.join(",")})');
+    final bookNames = {
+      for (final b in bookRows)
+        b['book_number'] as int: b['short_name'] as String
+    };
     return rows.map((r) {
       final bn = r['book_number'] as int;
       return SearchResult(
-        bookNumber:    bn,
+        bookNumber: bn,
         bookShortName: bookNames[bn] ?? '',
-        chapter:       r['chapter'] as int,
-        verse:         r['verse'] as int,
-        word:          r['word'] as String? ?? '',
-        strongs:       r['strongs'] as String?,
-        morphology:    r['morphology'] as String?,
+        chapter: r['chapter'] as int,
+        verse: r['verse'] as int,
+        word: r['word'] as String? ?? '',
+        strongs: r['strongs'] as String?,
+        morphology: r['morphology'] as String?,
       );
     }).toList();
   }
 
   /// Returns `true` when a usable search index is available.
-  /// Returns `false` (without throwing) when the index is still building
-  /// or the database file is missing / corrupt.
   Future<bool> _ensureIndex() async {
     if (_indexDb != null) return true;
-    if (_isBuilding) return false;        // build in progress — don't open partial DB
+    if (_isBuilding) return false;
     final path = join(await _dbDir(), 'search_index.db');
     if (!File(path).existsSync() || File(path).lengthSync() == 0) return false;
     try {
       _indexDb = await openDatabase(path, readOnly: true);
-      // Verify the required table exists.
       final tables = await _indexDb!.rawQuery(
           "SELECT name FROM sqlite_master WHERE type='table' AND name='words_fts'");
       if (tables.isEmpty) {
@@ -828,9 +929,29 @@ class DBService {
     }
   }
 
+  /// Checks if the index books count matches the current bible database books count.
+  Future<bool> needsReindex() async {
+    if (_bibleDb == null) return false;
+    if (!await _ensureIndex()) return true;
+
+    try {
+      final bibleCnt = Sqflite.firstIntValue(
+              await _bibleDb!.rawQuery('SELECT COUNT(*) FROM books')) ??
+          0;
+      final indexCnt = Sqflite.firstIntValue(
+              await _indexDb!.rawQuery('SELECT COUNT(*) FROM books_cache')) ??
+          0;
+      return bibleCnt != indexCnt;
+    } catch (_) {
+      return true;
+    }
+  }
+
   void dispose() {
     _bibleDb?.close();
-    for (final db in _dictDbs.values) { db.close(); }
+    for (final db in _dictDbs.values) {
+      db.close();
+    }
     _indexDb?.close();
   }
 }
